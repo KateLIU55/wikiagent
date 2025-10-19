@@ -60,3 +60,18 @@ site/*
 *.sqlite
 *.db
 *.log
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# large/local data
+data/*
+!data/.gitkeep
+site/*
+!site/.gitkeep
+
+# sqlite/db artifacts
+*.sqlite
+*.db
+*.log
