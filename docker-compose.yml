@@ -8,6 +8,7 @@ services:
       - ./config:/config
     environment:
       CRAWL_CFG: /config/whitelist.yml
+      DB_PATH: /data/wiki.sqlite
     command: python app.py
     networks: [wikinet]
 
@@ -19,7 +20,7 @@ services:
       - ./data:/data
     environment:
       BRAIN_BASE_URL: http://brain:8000
-      DB_PATH: /data/wiki.db
+      DB_PATH: /data/wiki.sqlite
     command: python app.py
     networks: [wikinet]
     depends_on:
@@ -34,7 +35,7 @@ services:
       - ./data:/data
     environment:
       BRAIN_BASE_URL: http://brain:8000
-      DB_PATH: /data/wiki.db
+      DB_PATH: /data/wiki.sqlite
     command: python app.py
     networks: [wikinet]
     depends_on:
@@ -49,7 +50,7 @@ services:
       - ./data:/data
     environment:
       BRAIN_BASE_URL: http://brain:8000
-      DB_PATH: /data/wiki.db
+      DB_PATH: /data/wiki.sqlite
     command: python app.py
     networks: [wikinet]
     depends_on:
@@ -69,7 +70,7 @@ services:
     build: ./brain
     container_name: brain
     environment:
-      DB_PATH: /data/wiki.db
+      DB_PATH: /data/wiki.sqlite
       LLM_API_BASE: http://host.docker.internal:1234/v1
       LLM_API_KEY: lm-studio
       MODEL: openai/gpt-oss-20b
@@ -88,7 +89,7 @@ services:
     environment:
       TIDDLERS_DIR: /data/tiddlers
       SITE_DIR: /site
-      DB_PATH: /data/wiki.db
+      DB_PATH: /data/wiki.sqlite
       BRAIN_BASE_URL: http://brain:8000
     volumes:
       - ./data:/data
