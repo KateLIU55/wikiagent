@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   crawler:
     build: ./crawler
@@ -43,7 +45,6 @@ services:
     networks: [wikinet]
     depends_on:
       - extractor
-
 
   publisher:
     build: ./publisher
@@ -103,7 +104,6 @@ services:
     networks: [wikinet]
     restart: unless-stopped
     command: sh -c "mkdir -p /site && tail -f /dev/null"
-
 
 networks:
   wikinet:
