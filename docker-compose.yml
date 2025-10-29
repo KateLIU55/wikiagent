@@ -36,9 +36,12 @@ services:
       - ./summarizer:/app
       - ./data:/data
     environment:
-      LLM_BASE_URL: https://kami-hysterogenic-drema.ngrok-free.dev/v1
-      LLM_API_KEY: local
-      LLM_MODEL: meta-llama-3.1-8b-instruct
+      LLM_BASE_URL: http://anjso.ddns.net:13001/api/v1/openai
+      LLM_API_KEY: ${LLM_API_KEY}
+      LLM_MODEL: anjso
+      # LLM_BASE_URL: https://kami-hysterogenic-drema.ngrok-free.dev/v1
+      # LLM_API_KEY: local
+      # LLM_MODEL: meta-llama-3.1-8b-instruct
       DATA_DIR: /data
       IDLE_INTERVAL: 60
     command: python app.py

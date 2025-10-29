@@ -12,12 +12,19 @@ SUMMARY_DIR = DATA_DIR / "summarized"             # Where summarized JSON files 
 
 # ---- LLM connection/config ---------------------------------------------------
 
-LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://host.docker.internal:1234/v1")  # OpenAI-compatible HTTP endpoint.
-LLM_API_KEY  = os.getenv("LLM_API_KEY", "local")                                  # Dummy/real key depending on server.
-MODEL_NAME   = os.getenv("LLM_MODEL", "meta-llama-3.1-8b-instruct")               # Model to ask for.
+LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://anjso.ddns.net:13001/api/v1")
+LLM_API_KEY  = os.getenv("LLM_API_KEY", "")
+MODEL_NAME   = os.getenv("LLM_MODEL", "anjso")
+# LLM_BASE_URL = os.getenv("LLM_BASE_URL", "http://host.docker.internal:1234/v1")  # OpenAI-compatible HTTP endpoint.
+# LLM_API_KEY  = os.getenv("LLM_API_KEY", "local")                                  # Dummy/real key depending on server.
+# MODEL_NAME   = os.getenv("LLM_MODEL", "meta-llama-3.1-8b-instruct")               # Model to ask for.
 INTERVAL     = int(os.getenv("IDLE_INTERVAL", "60"))  # Seconds to sleep when there’s no new work.
 
 client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)  # Create the API client bound to your local server.
+
+print(f"Connecting to LLM at {LLM_BASE_URL}", flush=True)
+print(f"Using model: {MODEL_NAME}", flush=True)
+
 
 # ---- Graceful shutdown -------------------------------------------------------
 
@@ -69,7 +76,84 @@ def chunk_text(text, max_tokens=SAFE_INPUT_TOKENS, overlap=OVERLAP_TOKENS):
     return [c for c in chunks if c]
 
 # ---- Core LLM call -----------------------------------------------------------
+# Adaptive Summarizer
 
+def summarize_text(text, max_chunk_size=4000, chunk_threshold=8000):
+    """
+    Summarize text using the local LLM.
+    If the text is larger than chunk_threshold characters, automatically chunk it.
+    """
+    try:
+        if len(text) > chunk_threshold:
+            print(f"[summarizer] Large file detected ({len(text)} chars) → using chunking...", flush=True)
+            chunks = [text[i:i + max_chunk_size] for i in range(0, len(text), max_chunk_size)]
+            partial_summaries = []
+
+            for i, chunk in enumerate(chunks):
+                print(f"[summarizer] Summarizing chunk {i+1}/{len(chunks)} ({len(chunk)} chars)...", flush=True)
+                resp = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "You are a summarizer that writes concise, factual summaries "
+                                "in under 150 words suitable for a wiki entry."
+                            ),
+                        },
+                        {"role": "user", "content": chunk},
+                    ],
+                )
+                reply = resp.choices[0].message.content.strip()
+                partial_summaries.append(reply)
+
+            combined_text = "\n".join(partial_summaries)
+            print("[summarizer] Combining partial summaries...", flush=True)
+
+            resp = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "Condense the following section summaries into one concise wiki-style paragraph "
+                            "under 150 words."
+                        ),
+                    },
+                    {"role": "user", "content": combined_text},
+                ],
+            )
+            return resp.choices[0].message.content.strip()
+
+        # Normal mode for small texts
+        else:
+            resp = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a summarizer that writes concise, factual summaries "
+                            "in under 150 words suitable for a wiki entry."
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+            )
+            if hasattr(resp, "choices"):
+                return resp.choices[0].message.content.strip()
+            elif isinstance(resp, dict) and "choices" in resp:
+                return resp["choices"][0]["message"]["content"].strip()
+            elif isinstance(resp, str):
+                return resp.strip()
+            else:
+                return json.dumps(resp, ensure_ascii=False)[:200]
+
+    except Exception as e:
+        print(f"[ERROR] LLM summarization failed: {e}", flush=True)
+        return None
+'''
+# Simple Summarizer
 def summarize_text(text):
     """Send text to the local LLM and return a short summary."""
     try:
@@ -86,10 +170,21 @@ def summarize_text(text):
                 {"role": "user", "content": text},    # The article/content to summarize.
             ],
         )
-        return resp.choices[0].message.content.strip()  # Extract and trim the first reply’s text.
+
+        # --- Handle multiple possible response formats ---
+        if hasattr(resp, "choices"):  # Normal OpenAI object
+            return resp.choices[0].message.content.strip()
+        elif isinstance(resp, dict) and "choices" in resp:  # JSON dict style
+            return resp["choices"][0]["message"]["content"].strip()
+        elif isinstance(resp, str):  # Raw string returned directly
+            return resp.strip()
+        else:  # Fallback: return partial JSON if something unexpected
+            return json.dumps(resp, ensure_ascii=False)[:500]
+
     except Exception as e:
         print(f"[ERROR] LLM summarization failed: {e}", flush=True)  # Log failures but don’t crash the service.
         return None
+
     
 # Ask the LLM to produce a short wiki-style title.
 
@@ -114,6 +209,7 @@ def generate_title(text):
     except Exception as e:
         print(f"[ERROR] LLM title generation failed: {e}", flush=True)
         return None    
+'''
 
 # ---- One scan pass over /data/clean -----------------------------------------
 
@@ -126,34 +222,56 @@ def process_once():
             continue  # already summarized
 
         try:
-            data = json.loads(json_path.read_text(encoding="utf-8"))
-            content = data.get("content", "")
-            if not content.strip():
+            # --- Load and validate JSON ---
+            raw_text = json_path.read_text(encoding="utf-8")
+            if not raw_text.strip():
+                print(f"[WARN] {json_path.name} is empty, skipping.", flush=True)
                 continue
 
+            try:
+                data = json.loads(raw_text)
+            except json.JSONDecodeError:
+                print(f"[WARN] {json_path.name} is not valid JSON, skipping.", flush=True)
+                continue
+
+            content = data.get("content", "")
+            if not isinstance(content, str) or not content.strip():
+                print(f"[WARN] {json_path.name} has no usable content, skipping.", flush=True)
+                continue
+
+            # --- Summarize the content ---
             print(f"[summarizer] Summarizing {json_path.name}...", flush=True)
             summary = summarize_text(content)
 
-            if summary:
-                title = generate_title(summary or content) or str(data.get("page_id", "Untitled"))
+            if not summary:
+                print(f"[WARN] No summary returned for {json_path.name}, skipping.", flush=True)
+                continue
 
-                data["summary"] = summary
-                data["title"] = title
+            # --- Generate title ---
+            title = generate_title(summary or content)
+            if not title:
+                title = str(data.get("page_id", "Untitled"))
 
-                slug = slugify(title)
+            # --- Prepare final JSON ---
+            data["summary"] = summary
+            data["title"] = title
+            slug = slugify(title)
 
-                # Keep the title in JSON, but name the file by page_id only
-                page_id = str(data.get("page_id", ""))
-                out_path = SUMMARY_DIR / f"{page_id}.json" if page_id else SUMMARY_DIR / json_path.name
+            # --- Determine output filename ---
+            page_id = str(data.get("page_id", "")).strip()
+            out_path = SUMMARY_DIR / (f"{page_id}.json" if page_id else json_path.name)
 
-                out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-                print(f"[summarizer] Saved summary as {out_path.name}", flush=True)
-                wrote += 1
+            # --- Write summarized file ---
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
+            print(f"[summarizer] ✅ Saved summary as {out_path.name}", flush=True)
+            wrote += 1
 
         except Exception as e:
-            print(f"[WARN] Failed {json_path}: {e}", flush=True)
-    return wrote                                                     # How many files we produced this pass.
+            print(f"[WARN] ❌ Failed to process {json_path.name}: {e}", flush=True)
+
+    return wrote  # How many files were successfully summarized this pass.
+
 
 # ---- Service entrypoint / main loop -----------------------------------------
 
