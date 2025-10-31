@@ -185,7 +185,7 @@ def summarize_text(text):
         print(f"[ERROR] LLM summarization failed: {e}", flush=True)  # Log failures but don’t crash the service.
         return None
 
-    
+'''
 # Ask the LLM to produce a short wiki-style title.
 
 def generate_title(text):
@@ -209,7 +209,7 @@ def generate_title(text):
     except Exception as e:
         print(f"[ERROR] LLM title generation failed: {e}", flush=True)
         return None    
-'''
+
 
 # ---- One scan pass over /data/clean -----------------------------------------
 
