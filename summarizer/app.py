@@ -216,7 +216,10 @@ def generate_title(text):
 def process_once():
     """Scan /data/clean for new .json files and summarize them."""
     wrote = 0
-    for json_path in sorted(CLEAN_DIR.glob("*.json")):
+    json_files = sorted(CLEAN_DIR.glob("*.json"), key=lambda p: p.stat().st_size)
+    print(f"[summarizer] Processing {len(json_files)} clean files (sorted smallest → largest)...", flush=True)
+    # Sorts clean JSON files by file size (smallest first)
+    for json_path in json_files:
         out_path = SUMMARY_DIR / json_path.name
         if out_path.exists():
             continue  # already summarized
@@ -264,11 +267,11 @@ def process_once():
             # --- Write summarized file ---
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(json.dumps(data, indent=2, ensure_ascii=False))
-            print(f"[summarizer] ✅ Saved summary as {out_path.name}", flush=True)
+            print(f"[summarizer] Saved summary as {out_path.name}", flush=True)
             wrote += 1
 
         except Exception as e:
-            print(f"[WARN] ❌ Failed to process {json_path.name}: {e}", flush=True)
+            print(f"[WARN] Failed to process {json_path.name}: {e}", flush=True)
 
     return wrote  # How many files were successfully summarized this pass.
 
@@ -282,7 +285,9 @@ if __name__ == "__main__":
     # Quick test connection (best-effort; some servers may not implement .models.list()).
     try:
         models = client.models.list()                                  # Probe server; returns a list of models.
-        print(f"LLM reachable, {len(models.data)} models available.", flush=True)
+        print(f"LLM reachable, {len(models.data)} models available:", flush=True)
+        for m in models.data:
+            print(f" - {m.id}", flush=True)
     except Exception as e:
         print(f"[WARN] Could not verify LLM: {e}", flush=True)         # Don’t crash if the endpoint lacks this route.
 
