@@ -152,40 +152,7 @@ def summarize_text(text, max_chunk_size=4000, chunk_threshold=8000):
     except Exception as e:
         print(f"[ERROR] LLM summarization failed: {e}", flush=True)
         return None
-'''
-# Simple Summarizer
-def summarize_text(text):
-    """Send text to the local LLM and return a short summary."""
-    try:
-        resp = client.chat.completions.create(        # OpenAI Chat Completions API call.
-            model=MODEL_NAME,                         # Ask for the configured model.
-            messages=[                                # 2-message chat: system + user.
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a summarizer that writes concise, factual summaries "
-                        "in under 150 words suitable for a wiki entry."
-                    ),
-                },
-                {"role": "user", "content": text},    # The article/content to summarize.
-            ],
-        )
 
-        # --- Handle multiple possible response formats ---
-        if hasattr(resp, "choices"):  # Normal OpenAI object
-            return resp.choices[0].message.content.strip()
-        elif isinstance(resp, dict) and "choices" in resp:  # JSON dict style
-            return resp["choices"][0]["message"]["content"].strip()
-        elif isinstance(resp, str):  # Raw string returned directly
-            return resp.strip()
-        else:  # Fallback: return partial JSON if something unexpected
-            return json.dumps(resp, ensure_ascii=False)[:500]
-
-    except Exception as e:
-        print(f"[ERROR] LLM summarization failed: {e}", flush=True)  # Log failures but don’t crash the service.
-        return None
-
-'''
 # Ask the LLM to produce a short wiki-style title.
 
 def generate_title(text):
