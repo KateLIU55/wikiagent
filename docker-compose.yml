@@ -54,10 +54,16 @@ services:
     container_name: publisher
     volumes:
       - ./publisher:/app
-      - ./data:/data
+      - ./data:/data    # where JSON/DB live
+      - ./site:/site    # write static site here
     environment:
       BRAIN_BASE_URL: http://brain:8000
       DB_PATH: /data/wiki.sqlite
+      DATA_DIR: /data
+      SUMMARY_DIR: /data/summarized
+      SITE_DIR: /site
+      WIKI_WORKDIR: /tmp/wiki
+      DEPLOY: "0"     # skip pushing to GitHub for now
     command: python app.py
     networks: [wikinet]
     depends_on:
