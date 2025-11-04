@@ -50,7 +50,7 @@ def load_cfg(path=CFG_PATH):
             cfg[k] = [item for sub in v for item in sub]
     return cfg
 
-# --- DB setup used only during init ---
+# DB setup used only during init 
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -142,7 +142,7 @@ def save_fetch_log(conn, page_id, status, nbytes, err=None):
                  (page_id, datetime.now(timezone.utc).isoformat(), status, nbytes, err))
     conn.commit()
 
-# --- Nanjing scoping ---
+# Nanjing scoping 
 TOPIC_RX = re.compile(
     r"^https://en\.wikipedia\.org/wiki/(?:"
     r"Nanjing($|_)|"
@@ -336,7 +336,7 @@ def crawl():
                         frontier.task_done()
                         continue
 
-                    # --- 200 OK HTML path ---
+                    # 200 OK HTML path 
                     html = resp.content
                     write_raw(page_id, html)
                     etag = resp.headers.get("ETag")
