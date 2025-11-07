@@ -6,6 +6,10 @@ from datetime import datetime, timezone
 import yaml, requests
 from bs4 import BeautifulSoup
 import json
+import schedule
+from datetime import datetime
+from zoneinfo import ZoneInfo
+import threading
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 RAW_DIR = os.path.join(DATA_DIR, "raw")
@@ -421,7 +425,25 @@ def _graceful(signum, frame):
 signal.signal(signal.SIGINT, _graceful)
 signal.signal(signal.SIGTERM, _graceful)
 
+# --- Automated scheduler: run crawl on 1st and 15th at 6:00 AM Pacific ---
+
+def run_if_due():
+    now = datetime.now(ZoneInfo("America/Los_Angeles"))
+    if now.day in {1, 15}:
+        print(f"[scheduler] {now:%Y-%m-%d %H:%M} → run day detected.")
+        threading.Thread(target=crawl, daemon=True).start()
+    else:
+        print(f"[scheduler] {now:%Y-%m-%d %H:%M} → not a run day, skipping.")
+
 if __name__ == "__main__":
-    print("Crawler service running...", flush=True)
-    crawl()
-    while True: time.sleep(60)
+    print("[crawler] Service scheduler active (1st & 15th, 6:00 AM Pacific)", flush=True)
+
+    # Schedule the check daily at 6:00 AM Pacific
+    schedule.every().day.at("06:00").do(run_if_due)
+
+    # Run once on startup if it happens to be a run day
+    run_if_due()
+
+    while True:
+        schedule.run_pending()
+        time.sleep(60)
