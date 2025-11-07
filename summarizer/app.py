@@ -25,21 +25,34 @@ def _graceful_exit(signum, frame):
 signal.signal(signal.SIGINT, _graceful_exit)
 signal.signal(signal.SIGTERM, _graceful_exit)
 
-def summarize_text(text: str) -> str | None:
-    try:
-        resp = client.chat.completions.create(
-            model=MODEL_NAME,
-            messages=[
-                {"role": "system",
-                 "content": "You write concise, factual wiki summaries under 150 words. Include key facts; no fluff."},
-                {"role": "user", "content": text[:8000]}  # guardrail: avoid huge prompts
-            ],
-            temperature=0.2,
-        )
-        return resp.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"[ERROR] LLM summarization failed: {e}", flush=True)
-        return None
+def summarize_multi(text: str) -> dict:
+    """Return summaries in English, Simplified Chinese, and Traditional Chinese."""
+    summaries = {}
+
+    prompts = {
+        "summary_en": "Write a concise wiki-style summary in English, under 150 words.",
+        "summary_zh_hans": "用简体中文写一个不超过150字的百科风格摘要。",
+        "summary_zh_hant": "用繁體中文寫一個不超過150字的百科風格摘要。"
+    }
+
+    for key, system_prompt in prompts.items():
+        try:
+            resp = client.chat.completions.create(
+                model=MODEL_NAME,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": text[:8000]}
+                ],
+                temperature=0.2,
+            )
+            summaries[key] = resp.choices[0].message.content.strip()
+
+        except Exception as e:
+            print(f"[ERROR] Failed to generate {key}: {e}", flush=True)
+            summaries[key] = None
+
+    return summaries
+
 
 def process_once() -> int:
     wrote = 0
@@ -68,12 +81,15 @@ def process_once() -> int:
                 continue
 
             print(f"[summarizer] Summarizing {json_path.relative_to(DATA_DIR)}...", flush=True)
-            summary = summarize_text(text)
-            if not summary:
-                continue
-            data["summary"] = summary
+            summaries = summarize_multi(text)
+
+            data["summary_en"] = summaries["summary_en"]
+            data["summary_zh_hans"] = summaries["summary_zh_hans"]
+            data["summary_zh_hant"] = summaries["summary_zh_hant"]
+
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+
             print(f"[summarizer] ✅ Saved summary to {out_path}", flush=True)
             wrote += 1
         except Exception as e:
