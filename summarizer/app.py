@@ -25,33 +25,70 @@ def _graceful_exit(signum, frame):
 signal.signal(signal.SIGINT, _graceful_exit)
 signal.signal(signal.SIGTERM, _graceful_exit)
 
-def summarize_multi(text: str) -> dict:
-    """Return summaries in English, Simplified Chinese, and Traditional Chinese."""
-    summaries = {}
 
-    prompts = {
-        "summary_en": "Write a concise wiki-style summary in English, under 150 words.",
-        "summary_zh_hans": "用简体中文写一个不超过150字的百科风格摘要。",
-        "summary_zh_hant": "用繁體中文寫一個不超過150字的百科風格摘要。"
+def chat_once(system_prompt: str, user_text: str) -> str | None:
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_text[:8000]},
+            ],
+            temperature=0.0,  # deterministic, fewer “creative” omissions
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[ERROR] LLM call failed: {e}", flush=True)
+        return None
+
+
+def summarize_multi(text: str) -> dict:
+    """
+    Step 1: make a single English summary.
+    Step 2: translate that summary into Simplified and Traditional Chinese.
+    This keeps all three versions aligned on content.
+    """
+    summaries = {
+        "summary_en": None,
+        "summary_zh_hans": None,
+        "summary_zh_hant": None,
     }
 
-    for key, system_prompt in prompts.items():
-        try:
-            resp = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text[:8000]}
-                ],
-                temperature=0.2,
-            )
-            summaries[key] = resp.choices[0].message.content.strip()
+    # 1) English summary
+    en = chat_once(
+        system_prompt=(
+            "You write concise, factual wiki summaries under 150 words. "
+            "Include all key facts in the input; do not omit important details."
+        ),
+        user_text=text,
+    )
+    if not en:
+        return summaries
 
-        except Exception as e:
-            print(f"[ERROR] Failed to generate {key}: {e}", flush=True)
-            summaries[key] = None
+    summaries["summary_en"] = en
+
+    # 2) Simplified Chinese translation
+    hans = chat_once(
+        system_prompt=(
+            "Translate the following English wiki summary into Simplified Chinese. "
+            "保留所有信息，不要省略任何重要细节，不要新增事实。"
+        ),
+        user_text=en,
+    )
+    summaries["summary_zh_hans"] = hans
+
+    # 3) Traditional Chinese translation
+    hant = chat_once(
+        system_prompt=(
+            "Translate the following English wiki summary into Traditional Chinese. "
+            "保留所有資訊，不要省略任何重要細節，不要新增事實。"
+        ),
+        user_text=en,
+    )
+    summaries["summary_zh_hant"] = hant
 
     return summaries
+
 
 
 def process_once() -> int:

@@ -54,7 +54,10 @@ services:
     volumes:
       - ./publisher:/app
       - ./data:/data
+      - ./site:/site 
     environment:
+      DATA_DIR: /data
+      SITE_DIR: /site
       BRAIN_BASE_URL: http://brain:8000
       DB_PATH: /data/wiki.sqlite
     command: python app.py

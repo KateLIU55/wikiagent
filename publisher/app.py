@@ -28,6 +28,8 @@
 import os, json, subprocess, hashlib, re
 from pathlib import Path
 from datetime import datetime
+import shutil
+
 
 # Read environment variables for directories
 DATA_DIR     = Path(os.getenv("DATA_DIR", "/data"))
@@ -62,14 +64,43 @@ def create_tiddlers() -> int:
     for json_path in Path(SUMMARY_DIR).glob("*.json"):
         try:
             data = json.loads(json_path.read_text(encoding="utf-8-sig"))
+
             title   = data.get("title") or json_path.stem
-            body    = data.get("summary") or data.get("text") or "No summary available."
+
+            summary_en      = (data.get("summary_en") or "").strip()
+            summary_zh_hans = (data.get("summary_zh_hans") or "").strip()
+            summary_zh_hant = (data.get("summary_zh_hant") or "").strip()
+
+            body_parts = []
+            if summary_en:
+                body_parts.append("English Summary\n\n" + summary_en)
+            if summary_zh_hans:
+                body_parts.append("中文（简体）\n\n" + summary_zh_hans)
+            if summary_zh_hant:
+                body_parts.append("中文（繁體）\n\n" + summary_zh_hant)
+
+            if body_parts:
+                body = "\n\n".join(body_parts)
+                source_mode = "multilingual"
+            else:
+                body = (data.get("summary") or
+                        data.get("content") or
+                        "No summary available.")
+                source_mode = "fallback"
+
+            # DEBUG: log what we actually used
+            print(f"[publisher] {json_path.name} -> title='{title}' "
+                  f"mode={source_mode} "
+                  f"len_en={len(summary_en)} len_hans={len(summary_zh_hans)} len_hant={len(summary_zh_hant)}",
+                  flush=True)
+
             tags    = data.get("tags") or ["summary"]
             source  = data.get("url") or "unknown"
             created = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             sid     = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
             fname   = f"{slugify(title)}-{sid}.tid"
             tagstr  = " ".join(tags if isinstance(tags, list) else [str(tags)])
+
             tid = (
                 f"title: {title}\n"
                 f"tags: {tagstr}\n"
@@ -79,12 +110,15 @@ def create_tiddlers() -> int:
                 f"{body}\n\n"
                 f"source: {source}\n"
             )
+
             (tiddlers_dir / fname).write_text(tid, encoding="utf-8")
             count += 1
         except Exception as e:
             print(f"[WARN] failed {json_path.name}: {e}", flush=True)
     print(f"[publisher] Created {count} tiddlers from {SUMMARY_DIR}")
     return count
+
+
 
 # inject theme, style, and site title before building
 def inject_theme_tiddlers():
@@ -178,12 +212,18 @@ def build_wiki():
 # Main function prints current dirs, creates tiddlers, and builds the wiki
 def main():
     print(f"[publisher] SUMMARY_DIR={SUMMARY_DIR} SITE_DIR={SITE_DIR}", flush=True)
+
+    # Clean WIKI_WORKDIR on each run to avoid stale tiddlers
+    if WIKI_WORKDIR.exists():
+        shutil.rmtree(WIKI_WORKDIR)
+
     created = create_tiddlers()
     if created == 0:
         print("[publisher] No summaries found; nothing to publish.", flush=True)
         return
-    inject_theme_tiddlers()  # add custom theme before building wiki.
+    inject_theme_tiddlers()
     build_wiki()
+
 
 if __name__ == "__main__":
     main()
