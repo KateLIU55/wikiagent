@@ -25,11 +25,10 @@
 # Adding this for the publisher section
 
 #!/usr/bin/env python3
+from enum import auto
 import os, json, subprocess, hashlib, re
 from pathlib import Path
 from datetime import datetime
-import shutil
-
 
 # Read environment variables for directories
 DATA_DIR     = Path(os.getenv("DATA_DIR", "/data"))
@@ -48,15 +47,56 @@ def slugify(s: str) -> str:
 def ensure_tw_project():
     (WIKI_WORKDIR / "tiddlers").mkdir(parents=True, exist_ok=True)
     info = {
-        "description": "Auto-generated wiki",
-        "plugins": ["tiddlywiki/tiddlyweb", "tiddlywiki/filesystem"],
-        "build": {
-            "index": ["--rendertiddler","$:/core/save/all","output/index.html","text/plain"]
-        }
+    "description": "Auto-generated wiki",
+    "plugins": [
+        "tiddlywiki/tiddlyweb",
+        "tiddlywiki/filesystem",
+        "tiddlywiki/highlight"
+    ],
+    "themes": [
+        "tiddlywiki/vanilla",
+        "tiddlywiki/snowwhite"
+    ],
+    "languages": [
+        "es-ES",
+        "fr-FR",
+        "en-US",
+        "zh-Hans",
+        "zh-Hant"
+    ],
+    "build": {
+        "index": [
+            "--render",
+            "$:/plugins/tiddlywiki/tiddlyweb/save/offline",
+            "index.html",
+            "text/plain"
+        ],
+        "static": [
+            "--render",
+            "$:/core/templates/static.template.html",
+            "static.html",
+            "text/plain",
+            "--render",
+            "$:/core/templates/alltiddlers.template.html",
+            "alltiddlers.html",
+            "text/plain",
+            "--render",
+            "[!is[system]]",
+            "[encodeuricomponent[]addprefix[static/]addsuffix[.html]]",
+            "text/plain",
+            "$:/core/templates/static.tiddler.html",
+            "--render",
+            "$:/core/templates/static.template.css",
+            "static/static.css",
+            "text/plain"
+        ]
     }
-    (WIKI_WORKDIR / "tiddlywiki.info").write_text(json.dumps(info), encoding="utf-8")
+}
+    (WIKI_WORKDIR / "tiddlywiki.info").write_text(json.dumps(info, indent=2), encoding="utf-8")
+    print("[publisher] Created /tmp/wiki/tiddlywiki.info", flush=True)
 
 # create tiddlers from JSON summaries, build .tid files
+
 def create_tiddlers() -> int:
     tiddlers_dir = WIKI_WORKDIR / "tiddlers"
     tiddlers_dir.mkdir(parents=True, exist_ok=True)
@@ -64,43 +104,18 @@ def create_tiddlers() -> int:
     for json_path in Path(SUMMARY_DIR).glob("*.json"):
         try:
             data = json.loads(json_path.read_text(encoding="utf-8-sig"))
-
             title   = data.get("title") or json_path.stem
-
-            summary_en      = (data.get("summary_en") or "").strip()
-            summary_zh_hans = (data.get("summary_zh_hans") or "").strip()
-            summary_zh_hant = (data.get("summary_zh_hant") or "").strip()
-
-            body_parts = []
-            if summary_en:
-                body_parts.append("English Summary\n\n" + summary_en)
-            if summary_zh_hans:
-                body_parts.append("中文（简体）\n\n" + summary_zh_hans)
-            if summary_zh_hant:
-                body_parts.append("中文（繁體）\n\n" + summary_zh_hant)
-
-            if body_parts:
-                body = "\n\n".join(body_parts)
-                source_mode = "multilingual"
-            else:
-                body = (data.get("summary") or
-                        data.get("content") or
-                        "No summary available.")
-                source_mode = "fallback"
-
-            # DEBUG: log what we actually used
-            print(f"[publisher] {json_path.name} -> title='{title}' "
-                  f"mode={source_mode} "
-                  f"len_en={len(summary_en)} len_hans={len(summary_zh_hans)} len_hant={len(summary_zh_hant)}",
-                  flush=True)
-
+            body    = body = (
+                        f"!! English Summary\n{data.get('summary_en','')}\n\n"
+                        f"!! 中文（简体）\n{data.get('summary_zh_hans','')}\n\n"
+                        f"!! 中文（繁體）\n{data.get('summary_zh_hant','')}"
+                        ) or data.get("text") or "No summary available."
             tags    = data.get("tags") or ["summary"]
             source  = data.get("url") or "unknown"
             created = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             sid     = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
             fname   = f"{slugify(title)}-{sid}.tid"
             tagstr  = " ".join(tags if isinstance(tags, list) else [str(tags)])
-
             tid = (
                 f"title: {title}\n"
                 f"tags: {tagstr}\n"
@@ -108,9 +123,8 @@ def create_tiddlers() -> int:
                 f"created: {created}\n"
                 f"modified: {created}\n\n"
                 f"{body}\n\n"
-                f"source: {source}\n"
+                f"source: [[{source}]]\n"
             )
-
             (tiddlers_dir / fname).write_text(tid, encoding="utf-8")
             count += 1
         except Exception as e:
@@ -118,111 +132,59 @@ def create_tiddlers() -> int:
     print(f"[publisher] Created {count} tiddlers from {SUMMARY_DIR}")
     return count
 
-
-
-# inject theme, style, and site title before building
-def inject_theme_tiddlers():
-    """Add theme and style overrides before building the wiki."""
+def inject_tiddlers():
+  # Create $:/SiteTitle and $:/SiteSubtitle tiddlers for branding
     tiddlers_dir = WIKI_WORKDIR / "tiddlers"
     tiddlers_dir.mkdir(parents=True, exist_ok=True)
 
-    # Theme selection
-    theme_tid = tiddlers_dir / "$__theme.tid"
-    theme_tid.write_text(
-        "title: $:/theme\n"
-        "type: text/plain\n\n"
-        "$:/themes/tiddlywiki/vanilla\n",
-        encoding="utf-8"
-    )
-
-    # Custom stylesheet
-    style_tid = tiddlers_dir / "$__themes__custom__anjso__style.tid"
-    style_css = """title: $:/themes/custom/anjso/style.css
-tags: [[$:/tags/Stylesheet]]
-type: text/css
-
-/* Base Page Colors */
-body {
-  font-family: "Inter", sans-serif;
-  background-color: #1a1a1a;
-  color: #f0f0f0;
-  max-width: 900px;
-  margin: 0 auto;
-  line-height: 1.6;
-}
-
-/* Tiddler Frames */
-.tc-tiddler-frame {
-  background: #666666;
-  border-radius: 8px;
-  padding: 1.5em;
-  margin-top: 1em;
-  box-shadow: 0 0 4px rgba(0,0,0,0.4);
-}
-
-/* Links */
-a {
-  color: #5ec2e8;
-  text-decoration: none;
-}
-a:hover {
-  text-decoration: underline;
-}
-
-/* Headings */
-h1, h2, h3 {
-  color: #e0e0e0;
-}
-.tc-subtitle {
-  color: #aaaaaa;
-}
-
-"""
-    
-    style_tid.write_text(style_css, encoding="utf-8")
-    print("[publisher] Injected theme and stylesheet tiddlers", flush=True)
-    # Custom site title
-    site_title_tid = tiddlers_dir / "$__SiteTitle.tid"
-    site_title_tid.write_text(
+    site_title = (
         "title: $:/SiteTitle\n"
         "type: text/vnd.tiddlywiki\n\n"
-        "Nanjing Knowledge Hub Wiki",
-        encoding="utf-8"
+        "Nanjing Knowledge Hub Wiki\n"
     )
+    site_subtitle = (
+        "title: $:/SiteSubtitle\n"
+        "type: text/vnd.tiddlywiki\n\n"
+        "Nanjing Encyclopedia, with a strong duck flavor\n"
+    )
+
+    (tiddlers_dir / "__site-title.tid").write_text(site_title, encoding="utf-8")
+    (tiddlers_dir / "__site-subtitle.tid").write_text(site_subtitle, encoding="utf-8")
 
 # Creates the wiki by invoking TiddlyWiki CLI
 def build_wiki():
-    print("[publisher] Building wiki…", flush=True)
+    print("[publisher] Building editable wiki...", flush=True)
     ensure_tw_project()
-    outdir = WIKI_WORKDIR / "output"
-    outdir.mkdir(parents=True, exist_ok=True)
-    subprocess.run([
-        "tiddlywiki", str(WIKI_WORKDIR),
-        "--output", str(outdir),
-        "--rendertiddler", "$:/core/save/all", "index.html", "text/plain"
-    ], check=True)
-    built_html = outdir / "index.html"
-    SITE_DIR.mkdir(parents=True, exist_ok=True)
-    if built_html.exists():
-        (SITE_DIR / "index.html").write_text(built_html.read_text(encoding="utf-8"))
-        print(f"[publisher] Wrote {SITE_DIR / 'index.html'}", flush=True)
-    else:
-        print("[publisher] ERROR: TiddlyWiki did not produce index.html", flush=True)
+    inject_tiddlers()
 
-# Main function prints current dirs, creates tiddlers, and builds the wiki
-def main():
-    print(f"[publisher] SUMMARY_DIR={SUMMARY_DIR} SITE_DIR={SITE_DIR}", flush=True)
-
-    # Clean WIKI_WORKDIR on each run to avoid stale tiddlers
-    if WIKI_WORKDIR.exists():
-        shutil.rmtree(WIKI_WORKDIR)
-
+    # Create the tiddlers
     created = create_tiddlers()
     if created == 0:
         print("[publisher] No summaries found; nothing to publish.", flush=True)
         return
-    inject_theme_tiddlers()
+
+    outdir = WIKI_WORKDIR / "output"
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Build the full folder-based wiki (not a static HTML)
+    cmd = [
+        "tiddlywiki", str(WIKI_WORKDIR),
+        "--build", "index"
+    ]
+
+    print(f"[publisher] Running: {' '.join(cmd)}", flush=True)
+    subprocess.run(cmd, check=True)
+
+    # Copy to SITE_DIR
+    SITE_DIR.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["cp", "-r", str(outdir) + "/", str(SITE_DIR)], check=True)
+    print(f"[publisher] Copied wiki folder to {SITE_DIR}", flush=True)
+
+
+def main():
+    print(f"[publisher] SUMMARY_DIR={SUMMARY_DIR} SITE_DIR={SITE_DIR}", flush=True)
     build_wiki()
+   
 
 
 if __name__ == "__main__":

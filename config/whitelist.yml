@@ -1,4 +1,5 @@
 seeds:
+  # EN seeds
   - https://en.wikipedia.org/wiki/Nanjing
   - https://en.wikipedia.org/wiki/Category:Nanjing
   - https://en.wikipedia.org/wiki/Category:Tourist_attractions_in_Nanjing
@@ -8,7 +9,6 @@ seeds:
   - https://en.wikipedia.org/wiki/Category:Universities_and_colleges_in_Nanjing
   - https://en.wikipedia.org/wiki/Category:Buildings_and_structures_in_Nanjing
 
-  # NEW seeds (examples—copy exact slugs from Wikipedia)
   - https://en.wikipedia.org/wiki/Category:Culture_of_Nanjing
   - https://en.wikipedia.org/wiki/Category:Transport_in_Nanjing
   - https://en.wikipedia.org/wiki/Category:Sports_in_Nanjing
@@ -24,21 +24,24 @@ seeds:
   - https://en.wikipedia.org/wiki/Category:Historic_sites_in_Nanjing
   - https://en.wikipedia.org/wiki/Category:Mass_media_in_Nanjing
 
-include_patterns:
-  # Nanjing article itself
-  - '^https://en[.]wikipedia[.]org/wiki/Nanjing($|_)'
-  # Pages whose titles contain Nanjing or are “_in_Nanjing” / “_of_Nanjing” / “_from_Nanjing”
-  - '^https://en[.]wikipedia[.]org/wiki/.*(Nanjing|_(in|of|from)_Nanjing)($|_)'
-  # Nanjing categories and subcategories
-  - '^https://en[.]wikipedia[.]org/wiki/Category:([^:]*Nanjing[^:]*)$'
-  # allow article pages discovered via categories
-  - '^https://en[.]wikipedia[.]org/wiki/[^:]+$'   
-  # category pagination
-  - '^https://en[.]wikipedia[.]org/w/index[.]php[?]title=Category:[^ ]+'
+  # ZH seed
+  - https://zh.wikipedia.org/wiki/%E5%8D%97%E4%BA%AC
+
+include_patterns:  
+  - 'https://(?:en|zh)(?:[.]m)?[.]wikipedia[.]org/.*'
+  - '^https://(?:en|zh)(?:[.]m)?[.]wikipedia[.]org/wiki/Nanjing($|_)'
+  - '^https://zh(?:[.]m)?[.]wikipedia[.]org/wiki/%E5%8D%97%E4%BA%AC($|_)'
+  - '^https://en(?:[.]m)?[.]wikipedia[.]org/wiki/.*(Nanjing|_(in|of|from)_Nanjing)($|_)'
+  - '^https://en(?:[.]m)?[.]wikipedia[.]org/wiki/Category:([^:]*Nanjing[^:]*)$'
+  - '^https://zh(?:[.]m)?[.]wikipedia[.]org/wiki/Category:.*'
+  - '^https://en(?:[.]m)?[.]wikipedia[.]org/wiki/[^:]+$'
+  - '^https://zh(?:[.]m)?[.]wikipedia[.]org/wiki/[^:]+$'
+  - '^https://en(?:[.]m)?[.]wikipedia[.]org/w/index[.]php[?]title=Category:[^ ]+'
+  - '^https://zh(?:[.]m)?[.]wikipedia[.]org/w/index[.]php[?]title=Category:[^ ]+'
 
 
 exclude_patterns:
-  - '^https://en[.]wikipedia[.]org/wiki/(Talk:|File:|Help:|Special:|Template:|Portal:).*'
+  - '^https://(?:en|zh)(?:[.]m)?[.]wikipedia[.]org/wiki/(Talk:|File:|Help:|Special:|Template:|Portal:).*'  
   - '[.](jpg|jpeg|png|gif|svg|pdf)$'
   - '#'
   - 'action=edit'

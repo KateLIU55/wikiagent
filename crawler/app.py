@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import yaml, requests
 from bs4 import BeautifulSoup
 import json
+import sys, signal
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 RAW_DIR = os.path.join(DATA_DIR, "raw")
@@ -21,7 +22,7 @@ def _atomic_write_bytes(path: str, data: bytes):
         f.write(data)
         f.flush()
         os.fsync(f.fileno())
-    os.replace(tmp, path)  # atomic on same filesystem
+    os.replace(tmp, path)
 
 def _atomic_write_text(path: str, text: str):
     tmp = path + ".tmp"
@@ -40,7 +41,6 @@ def write_meta(page_id, meta: dict):
     path = os.path.join(RAW_DIR, f"{page_id}.meta.json")
     _atomic_write_text(path, json.dumps(meta, ensure_ascii=False))
 
-
 def load_cfg(path=CFG_PATH):
     with open(path, "r") as f:
         cfg = yaml.safe_load(f) or {}
@@ -50,7 +50,7 @@ def load_cfg(path=CFG_PATH):
             cfg[k] = [item for sub in v for item in sub]
     return cfg
 
-# DB setup used only during init 
+# --- DB helpers ---
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -107,6 +107,7 @@ def allowed_by_patterns(url, include_res, exclude_res):
         return False
     return True
 
+# --- robots.txt ---
 _rp_cache = {}
 def robots_ok(url, agent=UA):
     host = urllib.parse.urlsplit(url).netloc
@@ -127,7 +128,7 @@ def robots_ok(url, agent=UA):
         if host not in _rp_cache:
             print(f"[warn] robots.txt unreadable; allowing by policy for {host}", flush=True)
             return True
-    return _rp_cache[host].can_fetch("*", url)   # use default '*' rules
+    return _rp_cache[host].can_fetch("*", url)
 
 def upsert_page(conn, url, depth):
     row = conn.execute("SELECT id, etag, last_modified FROM pages WHERE url=?", (url,)).fetchone()
@@ -142,9 +143,9 @@ def save_fetch_log(conn, page_id, status, nbytes, err=None):
                  (page_id, datetime.now(timezone.utc).isoformat(), status, nbytes, err))
     conn.commit()
 
-# Nanjing scoping 
+# --- Topic scope: accept en + zh Wikipedia for Nanjing topics ---
 TOPIC_RX = re.compile(
-    r"^https://en\.wikipedia\.org/wiki/(?:"
+    r"^https://(?:en|zh)\.wikipedia\.org/wiki/(?:"
     r"Nanjing($|_)|"
     r"[^:#]+_(?:in|of|from|at)_Nanjing($|_)|"
     r"Category:([^:]*Nanjing[^:]*)$"
@@ -155,9 +156,13 @@ def is_topic_url(u: str) -> bool:
     return bool(TOPIC_RX.search(u))
 
 def extract_links(base_url: str, html: bytes):
-    from bs4 import BeautifulSoup
     soup = BeautifulSoup(html, "lxml")
     out = []
+
+    # origin for absolute URL join (works on en or zh)
+    p = urllib.parse.urlsplit(base_url)
+    base_origin = f"{p.scheme}://{p.netloc}"
+    netloc = p.netloc
 
     def abs_wiki(href: str) -> str | None:
         if not href or not href.startswith("/wiki/"):
@@ -168,7 +173,7 @@ def extract_links(base_url: str, html: bytes):
             "/wiki/Special:", "/wiki/Template:", "/wiki/Portal:"
         )):
             return None
-        u = urllib.parse.urljoin("https://en.wikipedia.org", href)
+        u = urllib.parse.urljoin(base_origin, href)
         return canon_url(u)
 
     # treat both /wiki/Category:* and pagination pages as "category"
@@ -184,7 +189,7 @@ def extract_links(base_url: str, html: bytes):
             if not u:
                 continue
             tail = urllib.parse.urlsplit(u).path[len("/wiki/"):]
-            if ":" in tail:  # skip files/templates etc
+            if ":" in tail:
                 continue
             out.append((u, a.get_text(" ", strip=True)[:200]))
 
@@ -199,7 +204,7 @@ def extract_links(base_url: str, html: bytes):
             href = a.get("href")
             if not href:
                 continue
-            u = urllib.parse.urljoin("https://en.wikipedia.org", href)
+            u = urllib.parse.urljoin(base_origin, href)
             u = canon_url(u)
             if u:
                 out.append((u, "cat-page"))
@@ -210,6 +215,26 @@ def extract_links(base_url: str, html: bytes):
         u = abs_wiki(a.get("href"))
         if u and is_topic_url(u):
             out.append((u, a.get_text(" ", strip=True)[:200]))
+
+    # --- NEW: also follow interlanguage links (en <-> zh) to fetch the sibling page ---
+    # On enwiki, these are in the sidebar with hreflang/ lang "zh" variants; similar in zhwiki.
+    # We always add them with a special anchor so the worker enqueues them even if include_patterns don't match.
+    for a in soup.select("a[hreflang^='zh'], a[lang^='zh'], li.interlanguage-link.zh a, li.interlanguage-link a[lang^='zh']"):
+        href = a.get("href")
+        if not href:
+            continue
+        u = canon_url(urllib.parse.urljoin(base_origin, href))
+        if u:
+            out.append((u, "interlanguage-zh"))
+
+    # (optional) also follow back to English if we started on zh
+    for a in soup.select("a[hreflang='en'], a[lang='en'], li.interlanguage-link.en a"):
+        href = a.get("href")
+        if not href:
+            continue
+        u = canon_url(urllib.parse.urljoin(base_origin, href))
+        if u:
+            out.append((u, "interlanguage-en"))
 
     return out
 
@@ -248,8 +273,6 @@ def crawl():
 
     frontier = queue.Queue()
     seen = set()
-
-    # stop flag so we don't nuke the frontier 
     stop_event = threading.Event()
 
     enq = 0
@@ -282,14 +305,13 @@ def crawl():
                 except queue.Empty:
                     break
 
-                # once quota reached, skip any remaining queued items quickly 
                 if stop_event.is_set():
                     frontier.task_done()
                     continue
 
                 try:
                     if url in seen:
-                        frontier.task_done()  # balance join()
+                        frontier.task_done()
                         continue
                     seen.add(url)
 
@@ -336,7 +358,6 @@ def crawl():
                         frontier.task_done()
                         continue
 
-                    # 200 OK HTML path 
                     html = resp.content
                     write_raw(page_id, html)
                     etag = resp.headers.get("ETag")
@@ -360,7 +381,6 @@ def crawl():
                     save_fetch_log(conn, page_id, status, len(html), None)
                     print(f"[ok] 200 id={page_id} bytes={len(html)} depth={depth} {url}", flush=True)
 
-                    # gate new enqueues once quota hit 
                     if depth + 1 <= max_depth and not stop_event.is_set():
                         try:
                             links = extract_links(url, html) or []
@@ -368,7 +388,9 @@ def crawl():
                             print(f"[warn] link-extract failed id={page_id} {url}: {e!r}", flush=True)
                             links = []
                         for to_url, anchor in (links or []):
-                            if allowed_by_patterns(to_url, include_res, exclude_res) and to_url not in seen:
+                            # allow normal filter OR interlanguage siblings
+                            bypass = anchor in ("interlanguage-zh", "interlanguage-en")
+                            if (allowed_by_patterns(to_url, include_res, exclude_res) or bypass) and to_url not in seen:
                                 frontier.put((to_url, depth + 1))
                             try:
                                 conn.execute(
@@ -383,7 +405,7 @@ def crawl():
                         if fetched % 25 == 0:
                             print(f"[prog] fetched={fetched} frontier={frontier.qsize()}", flush=True)
                         if fetched >= max_pages:
-                            stop_event.set()  # hit quota; stop enqueuing/processing new items
+                            stop_event.set()
 
                     conn.commit()
                     frontier.task_done()
@@ -401,21 +423,14 @@ def crawl():
             try: conn.close()
             except Exception: pass
 
-    #  launch workers and wait for completion 
+    # launch workers and wait
     threads = [threading.Thread(target=worker, daemon=True) for _ in range(workers)]
-    for t in threads:
-        t.start()
-
-    frontier.join()  # all queued tasks have been task_done()
-
-    for t in threads:
-        t.join(timeout=1.0)
-
+    for t in threads: t.start()
+    frontier.join()
+    for t in threads: t.join(timeout=1.0)
     print(f"[done] fetched={fetched} raw_dir={RAW_DIR}", flush=True)
 
-
 # keep-alive
-import sys, signal
 def _graceful(signum, frame):
     print("Crawler shutting down...", flush=True); sys.exit(0)
 signal.signal(signal.SIGINT, _graceful)
