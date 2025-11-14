@@ -18,6 +18,7 @@ client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
 SKIP_CATEGORY_DOCS = os.getenv("SUMMARIZER_SKIP_CATEGORIES", "1")
 SUMMARIZER_SKIP_LISTS      = os.getenv("SUMMARIZER_SKIP_LISTS", "1")
 MIN_INPUT_CHARS            = int(os.getenv("MIN_INPUT_CHARS", "280"))
+MAX_LLM_CHARS             = int(os.getenv("MAX_LLM_CHARS", "3500")) 
 
 def _graceful_exit(signum, frame):
     print("Summarizer shutting down...", flush=True); sys.exit(0)
@@ -25,12 +26,21 @@ signal.signal(signal.SIGINT, _graceful_exit)
 signal.signal(signal.SIGTERM, _graceful_exit)
 
 def chat_once(system_prompt: str, user_text: str) -> Optional[str]:
+    # Hard-cap the amount of text we send to the LLM to avoid context errors
+    text = (user_text or "")
+    if len(text) > MAX_LLM_CHARS:
+        print(
+            f"[summarizer] truncating input from {len(text)} to {MAX_LLM_CHARS} chars",
+            flush=True,
+        )
+        text = text[:MAX_LLM_CHARS]
+
     try:
         resp = client.chat.completions.create(
             model=MODEL_NAME,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_text[:8000]},
+                {"role": "user", "content": text},
             ],
             temperature=0.0,
         )

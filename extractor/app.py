@@ -130,7 +130,7 @@ def extract_text_from_soup(soup: BeautifulSoup) -> str:
 def extract_text(html_bytes: bytes) -> str:
     return extract_text_from_soup(BeautifulSoup(html_bytes, "lxml"))
 
-# --------- NEW: interlanguage & Chinese fetching ----------
+# interlanguage & Chinese fetching 
 
 def find_interlanguage_links(soup: BeautifulSoup) -> dict:
     """
@@ -225,7 +225,6 @@ def chinese_variants_from_en_html(en_html: bytes) -> tuple[str | None, str | Non
 
     return zh_url, hans_title, hans_text, hant_text
 
-# ---------------------------------------------------------
 
 def process_once() -> int:
     wrote = 0

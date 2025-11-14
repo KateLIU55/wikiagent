@@ -50,7 +50,7 @@ def load_cfg(path=CFG_PATH):
             cfg[k] = [item for sub in v for item in sub]
     return cfg
 
-# --- DB helpers ---
+# DB helpers 
 def db():
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA journal_mode=WAL;")
@@ -107,7 +107,7 @@ def allowed_by_patterns(url, include_res, exclude_res):
         return False
     return True
 
-# --- robots.txt ---
+# robots.txt 
 _rp_cache = {}
 def robots_ok(url, agent=UA):
     host = urllib.parse.urlsplit(url).netloc
@@ -143,7 +143,7 @@ def save_fetch_log(conn, page_id, status, nbytes, err=None):
                  (page_id, datetime.now(timezone.utc).isoformat(), status, nbytes, err))
     conn.commit()
 
-# --- Topic scope: accept en + zh Wikipedia for Nanjing topics ---
+# Topic scope: accept en + zh Wikipedia for Nanjing topics 
 TOPIC_RX = re.compile(
     r"^https://(?:en|zh)\.wikipedia\.org/wiki/(?:"
     r"Nanjing($|_)|"
@@ -216,7 +216,7 @@ def extract_links(base_url: str, html: bytes):
         if u and is_topic_url(u):
             out.append((u, a.get_text(" ", strip=True)[:200]))
 
-    # --- NEW: also follow interlanguage links (en <-> zh) to fetch the sibling page ---
+    # follow interlanguage links (en <-> zh) to fetch the sibling page 
     # On enwiki, these are in the sidebar with hreflang/ lang "zh" variants; similar in zhwiki.
     # We always add them with a special anchor so the worker enqueues them even if include_patterns don't match.
     for a in soup.select("a[hreflang^='zh'], a[lang^='zh'], li.interlanguage-link.zh a, li.interlanguage-link a[lang^='zh']"):
