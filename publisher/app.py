@@ -101,21 +101,51 @@ def create_tiddlers() -> int:
     tiddlers_dir = WIKI_WORKDIR / "tiddlers"
     tiddlers_dir.mkdir(parents=True, exist_ok=True)
     count = 0
+
     for json_path in Path(SUMMARY_DIR).glob("*.json"):
         try:
             data = json.loads(json_path.read_text(encoding="utf-8-sig"))
-            title   = data.get("title") or json_path.stem
-            body    = body = (
-                        f"!! English Summary\n{data.get('summary_en','')}\n\n"
-                        f"!! 中文（简体）\n{data.get('summary_zh_hans','')}\n\n"
-                        f"!! 中文（繁體）\n{data.get('summary_zh_hant','')}"
-                        ) or data.get("text") or "No summary available."
-            tags    = data.get("tags") or ["summary"]
-            source  = data.get("url") or "unknown"
+
+            title = data.get("title") or json_path.stem
+
+            en_summary   = (data.get("summary_en") or "").strip()
+            hans_summary = (data.get("summary_zh_hans") or "").strip()
+            hant_summary = (data.get("summary_zh_hant") or "").strip()
+
+            body = (
+                f"!! English Summary\n{en_summary}\n\n"
+                f"!! 中文（简体）\n{hans_summary}\n\n"
+                f"!! 中文（繁體）\n{hant_summary}"
+            )
+            if not body.strip():
+                body = data.get("text") or "No summary available."
+
+            tags = data.get("tags") or ["summary"]
+
+            # English source (always present for crawled pages)
+            en_source = (data.get("url") or "").strip()
+            # Chinese source URL, if the article had a zh page
+            zh_source = (data.get("zh_url") or "").strip()
+
             created = datetime.utcnow().strftime("%Y%m%d%H%M%S")
             sid     = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
             fname   = f"{slugify(title)}-{sid}.tid"
             tagstr  = " ".join(tags if isinstance(tags, list) else [str(tags)])
+
+            # Build source line:
+            #  - always include English URL if available
+            #  - include Chinese URL iff there is a zh page *and* some Chinese summary text
+            source_parts = []
+            if en_source:
+                source_parts.append(f"[[{en_source}]]")
+            if zh_source and (hans_summary or hant_summary):
+                source_parts.append(f"[[{zh_source}]]")
+
+            if source_parts:
+                source_line = "source: " + " ; ".join(source_parts)
+            else:
+                source_line = "source: unknown"
+
             tid = (
                 f"title: {title}\n"
                 f"tags: {tagstr}\n"
@@ -123,14 +153,18 @@ def create_tiddlers() -> int:
                 f"created: {created}\n"
                 f"modified: {created}\n\n"
                 f"{body}\n\n"
-                f"source: [[{source}]]\n"
+                f"{source_line}\n"
             )
+
             (tiddlers_dir / fname).write_text(tid, encoding="utf-8")
             count += 1
+
         except Exception as e:
             print(f"[WARN] failed {json_path.name}: {e}", flush=True)
+
     print(f"[publisher] Created {count} tiddlers from {SUMMARY_DIR}")
     return count
+
 
 def inject_tiddlers():
   # Create $:/SiteTitle and $:/SiteSubtitle tiddlers for branding
