@@ -3,6 +3,8 @@ import os, json, time, signal, sys, re
 from pathlib import Path
 from typing import Optional, Dict, Tuple
 from openai import OpenAI
+from typing import Optional
+
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 CLEAN_DIR = DATA_DIR / "clean"
@@ -19,6 +21,26 @@ SKIP_CATEGORY_DOCS = os.getenv("SUMMARIZER_SKIP_CATEGORIES", "1")
 SUMMARIZER_SKIP_LISTS      = os.getenv("SUMMARIZER_SKIP_LISTS", "1")
 MIN_INPUT_CHARS            = int(os.getenv("MIN_INPUT_CHARS", "280"))
 MAX_LLM_CHARS             = int(os.getenv("MAX_LLM_CHARS", "3500")) 
+
+def strip_chinese_notes(text: Optional[str]) -> Optional[str]:
+    """
+    Remove note lines like '注：...' from Chinese summaries.
+    Returns cleaned text or None if it becomes empty.
+    """
+    if not text:
+        return text
+
+    keep_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        # Drop any line that starts with '注：' or '注意：'
+        if stripped.startswith("注：") or stripped.startswith("注意："):
+            continue
+        keep_lines.append(line)
+
+    cleaned = "\n".join(keep_lines).strip()
+    return cleaned or None
+
 
 def _graceful_exit(signum, frame):
     print("Summarizer shutting down...", flush=True); sys.exit(0)
@@ -157,6 +179,10 @@ def process_once() -> int:
                 if en:
                     hans = translate_zh(en, use_trad=False, main_title=zh_title_hans)
                     hant = translate_zh(en, use_trad=True, main_title=zh_title_hans)
+
+            # Clean up LLM-added note lines like '注：...'
+            hans = strip_chinese_notes(hans)
+            hant = strip_chinese_notes(hant)
 
             data["summary_en"] = en
             data["summary_zh_hans"] = hans

@@ -133,8 +133,8 @@ def create_tiddlers() -> int:
             tagstr  = " ".join(tags if isinstance(tags, list) else [str(tags)])
 
             # Build source line:
-            #  - always include English URL if available
-            #  - include Chinese URL iff there is a zh page *and* some Chinese summary text
+            #  always include English URL if available
+            #  include Chinese URL iff there is a zh page *and* some Chinese summary text
             source_parts = []
             if en_source:
                 source_parts.append(f"[[{en_source}]]")
