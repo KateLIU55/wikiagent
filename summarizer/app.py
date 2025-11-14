@@ -123,29 +123,45 @@ def process_once() -> int:
             # English summary (always from English content)
             en = summarize_en(en_text) if len(en_text) >= 80 else None
 
-            # Chinese summaries:
-            # 1) If we have Chinese article text, summarize directly in Chinese
-            # 2) Else, translate from English summary
-            hans = None
-            if zh_hans_text and len(zh_hans_text) >= MIN_INPUT_CHARS:
-                hans = summarize_zh(zh_hans_text, use_trad=False, main_title=zh_title_hans)
-            elif en:
-                hans = translate_zh(en, use_trad=False, main_title=zh_title_hans)
+            # Do we have any Chinese page/link?
+            have_zh_page = bool((data.get("zh_url") or "").strip())
 
-            hant = None
-            if zh_hant_text and len(zh_hant_text) >= MIN_INPUT_CHARS:
-                # If there is a true zh-hant page, summarize it
-                hant = summarize_zh(zh_hant_text, use_trad=True, main_title=zh_title_hans)
-            elif en:
-                # Fallback: translate EN to Traditional (safer than converting unknown Hans)
-                hant = translate_zh(en, use_trad=True, main_title=zh_title_hans)
-            elif hans:
-                # last resort: convert Hans summary to Hant via LLM
-                hant = chat_once("Convert the following Simplified Chinese text into Traditional Chinese. Do not change meaning.", hans)
+            hans = None  # Simplified Chinese
+            hant = None  # Traditional Chinese
+
+            if have_zh_page:
+                # Case 1: there IS a Chinese (zh) page 
+                # Simplified summary: prefer summarizing the Chinese article text.
+                if zh_hans_text and len(zh_hans_text) >= MIN_INPUT_CHARS:
+                    hans = summarize_zh(zh_hans_text, use_trad=False, main_title=zh_title_hans)
+                elif zh_hant_text and len(zh_hant_text) >= MIN_INPUT_CHARS:
+                    # If we only have a zh-Hant article, still ask the model to write in Simplified.
+                    hans = summarize_zh(zh_hant_text, use_trad=False, main_title=zh_title_hans)
+                elif en:
+                    # Fallback: no usable Chinese text; translate from English.
+                    hans = translate_zh(en, use_trad=False, main_title=zh_title_hans)
+
+                # Traditional summary: ALWAYS derived from the Simplified summary
+                # when a Chinese page exists.
+                if hans:
+                    hant = chat_once(
+                        "Convert the following Simplified Chinese text into Traditional Chinese. Do not change meaning.",
+                        hans,
+                    )
+                elif en:
+                    # Extremely rare: no Hans at all; last resort is EN -> Traditional.
+                    hant = translate_zh(en, use_trad=True, main_title=zh_title_hans)
+            else:
+                # Case 2: NO Chinese page/link
+                # Both Chinese summaries are translated from the English summary.
+                if en:
+                    hans = translate_zh(en, use_trad=False, main_title=zh_title_hans)
+                    hant = translate_zh(en, use_trad=True, main_title=zh_title_hans)
 
             data["summary_en"] = en
             data["summary_zh_hans"] = hans
             data["summary_zh_hant"] = hant
+
 
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
