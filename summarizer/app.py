@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-import os, json, time, signal, sys
+import os, json, time, signal, sys, re
 from pathlib import Path
+from typing import Optional, Dict, Tuple
 from openai import OpenAI
+from typing import Optional
+
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 CLEAN_DIR = DATA_DIR / "clean"
@@ -14,10 +17,29 @@ INTERVAL      = int(os.getenv("IDLE_INTERVAL", "60"))
 
 client = OpenAI(base_url=LLM_BASE_URL, api_key=LLM_API_KEY)
 
-SKIP_CATEGORY_DOCS = os.getenv("SUMMARIZER_SKIP_CATEGORIES", "1")  # default: skip
+SKIP_CATEGORY_DOCS = os.getenv("SUMMARIZER_SKIP_CATEGORIES", "1")
 SUMMARIZER_SKIP_LISTS      = os.getenv("SUMMARIZER_SKIP_LISTS", "1")
 MIN_INPUT_CHARS            = int(os.getenv("MIN_INPUT_CHARS", "280"))
+MAX_LLM_CHARS             = int(os.getenv("MAX_LLM_CHARS", "3500")) 
 
+def strip_chinese_notes(text: Optional[str]) -> Optional[str]:
+    """
+    Remove note lines like '注：...' from Chinese summaries.
+    Returns cleaned text or None if it becomes empty.
+    """
+    if not text:
+        return text
+
+    keep_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        # Drop any line that starts with '注：' or '注意：'
+        if stripped.startswith("注：") or stripped.startswith("注意："):
+            continue
+        keep_lines.append(line)
+
+    cleaned = "\n".join(keep_lines).strip()
+    return cleaned or None
 
 
 def _graceful_exit(signum, frame):
@@ -25,34 +47,66 @@ def _graceful_exit(signum, frame):
 signal.signal(signal.SIGINT, _graceful_exit)
 signal.signal(signal.SIGTERM, _graceful_exit)
 
-def summarize_multi(text: str) -> dict:
-    """Return summaries in English, Simplified Chinese, and Traditional Chinese."""
-    summaries = {}
+def chat_once(system_prompt: str, user_text: str) -> Optional[str]:
+    # Hard-cap the amount of text we send to the LLM to avoid context errors
+    text = (user_text or "")
+    if len(text) > MAX_LLM_CHARS:
+        print(
+            f"[summarizer] truncating input from {len(text)} to {MAX_LLM_CHARS} chars",
+            flush=True,
+        )
+        text = text[:MAX_LLM_CHARS]
 
-    prompts = {
-        "summary_en": "Write a concise wiki-style summary in English, under 150 words.",
-        "summary_zh_hans": "用简体中文写一个不超过150字的百科风格摘要。",
-        "summary_zh_hant": "用繁體中文寫一個不超過150字的百科風格摘要。"
-    }
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text},
+            ],
+            temperature=0.0,
+        )
+        return (resp.choices[0].message.content or "").strip()
+    except Exception as e:
+        print(f"[ERROR] LLM call failed: {e}", flush=True)
+        return None
 
-    for key, system_prompt in prompts.items():
-        try:
-            resp = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text[:8000]}
-                ],
-                temperature=0.2,
-            )
-            summaries[key] = resp.choices[0].message.content.strip()
+def summarize_en(source_text: str) -> Optional[str]:
+    return chat_once(
+        "Write a concise, factual wiki-style summary (3–6 sentences, <150 words). "
+        "Plain text only. Include key facts present in the input; do not invent details.",
+        source_text,
+    )
 
-        except Exception as e:
-            print(f"[ERROR] Failed to generate {key}: {e}", flush=True)
-            summaries[key] = None
+def summarize_zh(source_text: str, use_trad: bool, main_title: Optional[str]) -> Optional[str]:
+    # Summarize directly in Chinese (NOT translate). Stop bullets/markdown.
+    script = "Traditional Chinese" if use_trad else "Simplified Chinese"
+    sys_prompt = (
+        f"根據以下中文資料，用{script}撰寫百科式摘要，3–6句，<180字。"
+        "只使用自然段落，不能使用項目符號、標題或任何Markdown標記。"
+        "忠實於輸入內容，不要新增事實。"
+    )
+    if main_title:
+        # Encourage using the canonical Chinese title if provided
+        sys_prompt += f" 本條目的中文標題為「{main_title}」，提及主體時請使用此名稱。"
+    return chat_once(sys_prompt, source_text)
 
-    return summaries
-
+def translate_zh(en_summary: str, use_trad: bool, main_title: Optional[str]) -> Optional[str]:
+    if use_trad:
+        sys_prompt = (
+            "Translate the English wiki summary into Traditional Chinese. "
+            "保持事實一致，不要新增內容；輸出自然段落，不能使用任何標記。"
+        )
+        if main_title:
+            sys_prompt += f" 主體的中文名稱是「{main_title}」，請在譯文中使用。"
+    else:
+        sys_prompt = (
+            "Translate the English wiki summary into Simplified Chinese. "
+            "保持事实一致，不要新增内容；输出自然段落，不能使用任何标记。"
+        )
+        if main_title:
+            sys_prompt += f" 主体的中文名称是“{main_title}”，请在译文中使用。"
+    return chat_once(sys_prompt, en_summary)
 
 def process_once() -> int:
     wrote = 0
@@ -61,41 +115,89 @@ def process_once() -> int:
         if out_path.exists():
             continue
 
-        data, text, url, doc_type = {}, "", "", ""
+        data = {}
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
-
-            # get fields FIRST
             url = data.get("url") or ""
             doc_type = (data.get("doc_type") or "").lower()
-            text = (data.get("content") or "").strip()   # <-- moved up
 
-            # skip checks AFTER text is set
-            if (not url
-                or len(text) < MIN_INPUT_CHARS
+            if (
+                not url
                 or doc_type in ("disambiguation",)
                 or (SKIP_CATEGORY_DOCS == "1" and doc_type == "category")
-                or (SUMMARIZER_SKIP_LISTS == "1" and doc_type == "list")):
-                print(f"[summarizer] skip {doc_type or 'unknown'} {url or data.get('page_id')} "
-                      f"chars={len(text)}<min={MIN_INPUT_CHARS}", flush=True)
+                or (SUMMARIZER_SKIP_LISTS == "1" and doc_type == "list")
+            ):
+                print(f"[summarizer] skip {doc_type or 'unknown'} {url}", flush=True)
                 continue
 
-            print(f"[summarizer] Summarizing {json_path.relative_to(DATA_DIR)}...", flush=True)
-            summaries = summarize_multi(text)
+            # Source texts
+            en_text       = (data.get("content") or "").strip()
+            zh_hans_text  = (data.get("content_zh_hans") or "").strip()
+            zh_hant_text  = (data.get("content_zh_hant") or "").strip()
+            zh_title_hans = (data.get("zh_title_hans") or "").strip() or None
 
-            data["summary_en"] = summaries["summary_en"]
-            data["summary_zh_hans"] = summaries["summary_zh_hans"]
-            data["summary_zh_hant"] = summaries["summary_zh_hant"]
+            if len(en_text) < MIN_INPUT_CHARS and not (len(zh_hans_text) >= MIN_INPUT_CHARS or len(zh_hant_text) >= MIN_INPUT_CHARS):
+                print(f"[summarizer] too-short content {url}", flush=True)
+                continue
+
+            print(f"[summarizer] Summarizing {json_path.relative_to(DATA_DIR)} (zh_url={bool(data.get('zh_url'))})", flush=True)
+
+            # English summary (always from English content)
+            en = summarize_en(en_text) if len(en_text) >= 80 else None
+
+            # Do we have any Chinese page/link?
+            have_zh_page = bool((data.get("zh_url") or "").strip())
+
+            hans = None  # Simplified Chinese
+            hant = None  # Traditional Chinese
+
+            if have_zh_page:
+                # Case 1: there IS a Chinese (zh) page 
+                # Simplified summary: prefer summarizing the Chinese article text.
+                if zh_hans_text and len(zh_hans_text) >= MIN_INPUT_CHARS:
+                    hans = summarize_zh(zh_hans_text, use_trad=False, main_title=zh_title_hans)
+                elif zh_hant_text and len(zh_hant_text) >= MIN_INPUT_CHARS:
+                    # If we only have a zh-Hant article, still ask the model to write in Simplified.
+                    hans = summarize_zh(zh_hant_text, use_trad=False, main_title=zh_title_hans)
+                elif en:
+                    # Fallback: no usable Chinese text; translate from English.
+                    hans = translate_zh(en, use_trad=False, main_title=zh_title_hans)
+
+                # Traditional summary: ALWAYS derived from the Simplified summary
+                # when a Chinese page exists.
+                if hans:
+                    hant = chat_once(
+                        "Convert the following Simplified Chinese text into Traditional Chinese. Do not change meaning.",
+                        hans,
+                    )
+                elif en:
+                    # Extremely rare: no Hans at all; last resort is EN -> Traditional.
+                    hant = translate_zh(en, use_trad=True, main_title=zh_title_hans)
+            else:
+                # Case 2: NO Chinese page/link
+                # Both Chinese summaries are translated from the English summary.
+                if en:
+                    hans = translate_zh(en, use_trad=False, main_title=zh_title_hans)
+                    hant = translate_zh(en, use_trad=True, main_title=zh_title_hans)
+
+            # Clean up LLM-added note lines like '注：...'
+            hans = strip_chinese_notes(hans)
+            hant = strip_chinese_notes(hant)
+
+            data["summary_en"] = en
+            data["summary_zh_hans"] = hans
+            data["summary_zh_hant"] = hant
+
 
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
             print(f"[summarizer] ✅ Saved summary to {out_path}", flush=True)
             wrote += 1
-        except Exception as e:
-            print(f"[WARN] Failed {json_path}: {e} (type={doc_type or '∅'}, url={url or '∅'}, chars={len(text)})", flush=True)
-    return wrote
 
+        except Exception as e:
+            print(f"[WARN] Failed {json_path}: {e}", flush=True)
+
+    return wrote
 
 if __name__ == "__main__":
     print(f"Summarizer service running... (model={MODEL_NAME})", flush=True)
@@ -107,7 +209,6 @@ if __name__ == "__main__":
         print(f"[WARN] Could not verify LLM: {e}", flush=True)
 
     SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
-
     while True:
         n = process_once()
         if n == 0:
