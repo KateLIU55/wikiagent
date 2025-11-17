@@ -1,3 +1,5 @@
+version: "3.9"
+
 services:
   crawler:
     build: ./crawler
@@ -8,11 +10,12 @@ services:
       - ./config:/config
     environment:
       CRAWL_CFG: /config/whitelist.yml
-      CRAWL_MAX_PAGES: "900"         # <— force 900 regardless of file
-      CRAWL_MAX_DEPTH: "3"
       DB_PATH: /data/wiki.sqlite
+      TZ: "America/Los_Angeles"     # Pacific Time
     command: python app.py
     networks: [wikinet]
+    restart: unless-stopped
+
 
   extractor:
     build: ./extractor
@@ -36,17 +39,19 @@ services:
       - ./summarizer:/app
       - ./data:/data
     environment:
-      LLM_BASE_URL: http://brain:8000/v1   # talk to brain’s OpenAI-style proxy
-      LLM_API_KEY: local
-      LLM_MODEL: llama-3.1-8b-instruct
+      # --- Tian’s remote endpoint ---
+      LLM_BASE_URL: http://anjso.ddns.net:13001/api/v1/openai
+      LLM_API_KEY: ${LLM_API_KEY}     # ANJSO Key
+      LLM_MODEL: anjso
+      # LLM_BASE_URL: http://brain:8000/v1
+      # LLM_API_KEY: ${LLM_API_KEY}
+      # LLM_MODEL: meta-llama-3.1-8b-instruct
       DATA_DIR: /data
       IDLE_INTERVAL: 60
     command: python app.py
     networks: [wikinet]
     depends_on:
       - extractor
-      - brain
-
 
   publisher:
     build: ./publisher
@@ -60,6 +65,11 @@ services:
       SITE_DIR: /site
       BRAIN_BASE_URL: http://brain:8000
       DB_PATH: /data/wiki.sqlite
+      DATA_DIR: /data
+      SUMMARY_DIR: /data/summarized
+      SITE_DIR: /site
+      WIKI_WORKDIR: /tmp/wiki
+      DEPLOY: "0"
     command: python app.py
     networks: [wikinet]
     depends_on:
@@ -80,10 +90,9 @@ services:
     container_name: brain
     environment:
       DB_PATH: /data/wiki.sqlite
-      LLM_API_BASE: http://host.docker.internal:1234/v1
-      LLM_API_KEY: lm-studio
-      MODEL: llama-3.1-8b-instruct
-      ALLOWED_MODELS: llama-3.1-8b-instruct,qwen2.5-7b-instruct,phi-3-mini,nomic-embed-text-v1.5,meta-llama-3.1-8b-instruct
+      LLM_API_BASE: http://anjso.ddns.net:13001/api/v1/openai
+      LLM_API_KEY: ${LLM_API_KEY}
+      MODEL: anjso
     volumes:
       - ./data:/data
     depends_on:
@@ -110,7 +119,6 @@ services:
     networks: [wikinet]
     restart: unless-stopped
     command: sh -c "mkdir -p /site && tail -f /dev/null"
-
 
 networks:
   wikinet:

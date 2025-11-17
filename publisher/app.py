@@ -87,7 +87,7 @@ def create_homepage():
 <title>Nanjing Knowledge Hub</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-    /* ===== COLOR THEME (matches TiddlyWiki SnowWhite) ===== */
+    /* ===== COLOR THEME ===== */
     :root {
         --bg: #eef1f7;           /* soft light gray */
         --card: #ffffff;         /* white card */
@@ -584,7 +584,7 @@ def build_wiki():
     outdir = WIKI_WORKDIR / "output"
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # Build the full folder-based wiki (not a static HTML)
+    # Build the wiki
     cmd = [
         "tiddlywiki", str(WIKI_WORKDIR),
         "--build", "index"
