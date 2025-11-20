@@ -36,6 +36,71 @@ SUMMARY_DIR  = Path(os.getenv("SUMMARY_DIR", str(DATA_DIR / "summarized")))
 SITE_DIR     = Path(os.getenv("SITE_DIR", "/site"))
 WIKI_WORKDIR = Path(os.getenv("WIKI_WORKDIR", "/tmp/wiki"))
 
+# Autolink helpers
+def build_title_index():
+    """
+    Scan all summarized JSON files and collect:
+    - English titles (for linking English text)
+    - Chinese zh-Hans titles (for linking Chinese text)
+    Returns: (en_titles, zh_titles) where
+      en_titles: [ "Hongshan Forest Zoo", "City Wall of Nanjing", ... ]
+      zh_titles: [("江苏省", "Jiangsu"), ("明孝陵", "Ming Xiaoling Mausoleum"), ...]
+    """
+    en_titles = []
+    zh_titles = []
+
+    for json_path in Path(SUMMARY_DIR).glob("*.json"):
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+
+        title = (data.get("title") or json_path.stem).strip()
+        if title:
+            en_titles.append(title)
+
+        zh_title = (data.get("zh_title_hans") or "").strip()
+        if zh_title:
+            zh_titles.append((zh_title, title))
+
+    # Link longer phrases first to avoid shorter ones eating them
+    en_titles.sort(key=len, reverse=True)
+    zh_titles.sort(key=lambda x: len(x[0]), reverse=True)
+    return en_titles, zh_titles
+
+
+def autolink_en(text: str, en_titles, current_title: str) -> str:
+    """
+    Turn occurrences of other English titles into [[Title]] links.
+    """
+    if not text:
+        return text
+
+    for t in en_titles:
+        if t == current_title:
+            continue
+        # word-boundary match so we don't hit substrings
+        pattern = r"\b" + re.escape(t) + r"\b"
+        text = re.sub(pattern, r"[[\g<0>]]", text)
+    return text
+
+
+def autolink_zh(text: str, zh_titles, current_title: str) -> str:
+    """
+    Turn occurrences of Chinese titles into [[显示文字|EnglishTitle]] links.
+    (Chinese display text, link points to English-titled tiddler.)
+    """
+    if not text:
+        return text
+
+    for phrase, canon_title in zh_titles:
+        if canon_title == current_title:
+            continue
+        if phrase in text:
+            text = text.replace(phrase, f"[[{phrase}|{canon_title}]]")
+    return text
+
+
 # create url-friendly for filenames
 _slug_re = re.compile(r"[^a-z0-9-_]")
 def slugify(s: str) -> str:
@@ -116,7 +181,8 @@ def create_homepage():
 
     h1 {
         margin: 0 0 20px;
-        font-weight:var(--accent-light);
+        font-weight: 600;
+        color: var(--accent-light);
         text-align: center;
         font-size: 48px;
         color: var(--accent);
@@ -455,7 +521,7 @@ exports.startup = function() {
     print("[publisher] Injected external search handler", flush=True)
 
 # create tiddlers from JSON summaries, build .tid files
-def create_tiddlers() -> int:
+def create_tiddlers(en_titles, zh_titles) -> int:
     tiddlers_dir = WIKI_WORKDIR / "tiddlers"
     tiddlers_dir.mkdir(parents=True, exist_ok=True)
     count = 0
@@ -470,13 +536,19 @@ def create_tiddlers() -> int:
             hans_summary = (data.get("summary_zh_hans") or "").strip()
             hant_summary = (data.get("summary_zh_hant") or "").strip()
 
+            # Add internal wiki links
+            en_linked   = autolink_en(en_summary, en_titles, title)
+            hans_linked = autolink_zh(hans_summary, zh_titles, title)
+            hant_linked = autolink_zh(hant_summary, zh_titles, title)
+
             body = (
-                f"!! English Summary\n{en_summary}\n\n"
-                f"!! 中文（简体）\n{hans_summary}\n\n"
-                f"!! 中文（繁體）\n{hant_summary}"
+                f"!! English Summary\n{en_linked}\n\n"
+                f"!! 中文（简体）\n{hans_linked}\n\n"
+                f"!! 中文（繁體）\n{hant_linked}"
             )
             if not body.strip():
                 body = data.get("text") or "No summary available."
+
 
             tags = data.get("tags") or ["summary"]
 
@@ -575,8 +647,11 @@ def build_wiki():
     ensure_tw_project()
     inject_tiddlers()
 
+    # Build index of titles for autolinking
+    en_titles, zh_titles = build_title_index()
+
     # Create the tiddlers
-    created = create_tiddlers()
+    created = create_tiddlers(en_titles, zh_titles)
     if created == 0:
         print("[publisher] No summaries found; nothing to publish.", flush=True)
         return

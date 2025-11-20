@@ -121,6 +121,62 @@ def process_once() -> int:
             url = data.get("url") or ""
             doc_type = (data.get("doc_type") or "").lower()
 
+            categories = data.get("categories") or []
+            derived_tags = set()
+
+            # mapping:
+            CATEGORY_TAG_MAP = {
+                "Tourist attractions in Nanjing": "景点",
+                "History of Nanjing": "历史",
+                "Cuisine of Nanjing": "美食",
+                "Parks in Nanjing": "公园",
+                "Museums in Nanjing": "博物馆",
+                "Universities and colleges in Nanjing": "高校",
+                "Sports in Nanjing": "体育",
+                "Transportation in Nanjing": "交通",
+                "Economy of Nanjing": "经济",
+                "Culture in Nanjing": "文化",
+                "Geography of Nanjing": "地理",
+                "Historic sites in Nanjing": "历史遗迹",
+                "Mass media in Nanjing": "媒体",
+                "Religion in Nanjing": "宗教",
+                "Government of Nanjing": "政府",
+                "Nanjing": "南京",
+                "Buildings and structures in Nanjing": "建筑",
+                "Events in Nanjing": "事件",
+                "Arts in Nanjing": "艺术",
+                "Science and technology in Nanjing": "科技",
+                "Notable people from Nanjing": "名人",
+                "Companies based in Nanjing": "公司",
+                "Hospitals in Nanjing": "医院",
+                "Bridges in Nanjing": "桥梁",
+                "Streets in Nanjing": "街道",
+                "Rivers of Nanjing": "河流",
+                "Lakes of Nanjing": "湖泊",
+                "Mountains of Nanjing": "山脉",
+                "Festivals in Nanjing": "节日",
+                "Tourism in Nanjing": "旅游",
+                
+                # add more as you go
+            }
+
+            for cat in categories:
+                # English category -> Chinese tag via map
+                tag = CATEGORY_TAG_MAP.get(cat)
+                if tag:
+                    derived_tags.add(tag)
+
+            # Always keep a generic 'summary' tag too
+            if not derived_tags:
+                derived_tags.add("summary")
+            else:
+                derived_tags.add("summary")
+
+            # Store tags into summarized JSON
+            data["tags"] = sorted(derived_tags)
+
+
+
             if (
                 not url
                 or doc_type in ("disambiguation",)
@@ -146,8 +202,11 @@ def process_once() -> int:
             en = summarize_en(en_text) if len(en_text) >= 80 else None
 
             # Do we have any Chinese page/link?
-            have_zh_page = bool((data.get("zh_url") or "").strip())
-
+            have_zh_page = bool(
+                (data.get("zh_url") or "").strip() or
+                (data.get("content_zh_hans") or "").strip() or
+                (data.get("content_zh_hant") or "").strip()
+            )
             hans = None  # Simplified Chinese
             hant = None  # Traditional Chinese
 
