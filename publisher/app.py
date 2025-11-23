@@ -39,6 +39,30 @@ SUMMARY_DIR  = Path(os.getenv("SUMMARY_DIR", str(DATA_DIR / "summarized")))
 SITE_DIR     = Path(os.getenv("SITE_DIR", "/site"))
 WIKI_WORKDIR = Path(os.getenv("WIKI_WORKDIR", "/tmp/wiki"))
 
+# SPECIAL CASE: all known titles for the tunnel topic                 
+TUNNEL_TITLES = {                                                   
+    "Nanjing Yingtian Avenue Yangtze River Tunnel",
+    "南京应天大街长江隧道",
+    "南京應天大街長江隧道",
+}
+
+# CHANGE: strip raw wiki-style links like [[Target]] or [[Target|Label]]
+# down to plain visible text so we don't carry Wikipedia markup into
+# our tiddlers and accidentally generate broken links.
+def strip_wikilinks_markup(text: str) -> str:
+    if not text:
+        return text
+
+    def _repl(m: re.Match) -> str:
+        inner = m.group(1)
+        # If there's a pipe, keep the *label* (usually the last part).
+        if "|" in inner:
+            return inner.split("|")[-1]
+        return inner
+
+    return re.sub(r"\[\[([^\]]+)\]\]", _repl, text)
+
+
 # Autolink helpers
 def build_title_index():
     """
@@ -66,6 +90,25 @@ def build_title_index():
         )
 
         title = (data.get("title") or json_path.stem).strip()
+
+        # CHANGE: normalize the canonical title so that the index matches
+        # the final titles we actually use when creating tiddlers.
+        raw_en_summary = (data.get("summary_en") or "").strip()
+
+        # Special case: the Yingtian Avenue tunnel should always use the
+        # same canonical English title.
+        if title in TUNNEL_TITLES:
+            title = "Nanjing Yingtian Avenue Yangtze River Tunnel"
+
+        # If the stored title looks Chinese but we *do* have a real English
+        # summary, derive an English title from that summary (same logic
+        # as in create_tiddlers()) so autolinks point at the correct page.
+        elif looks_like_chinese(title) and raw_en_summary and not looks_like_chinese(raw_en_summary):
+            derived = derive_english_title_from_summary(raw_en_summary)
+            if derived:
+                title = derived
+        # END CHANGE
+
         if title and has_summary:
             en_titles.append(title)
 
@@ -585,12 +628,7 @@ def create_tiddlers(en_titles, zh_titles) -> int:
     tiddlers_dir = WIKI_WORKDIR / "tiddlers"
     tiddlers_dir.mkdir(parents=True, exist_ok=True)
 
-    # SPECIAL CASE: all known titles for the tunnel topic                 
-    TUNNEL_TITLES = {                                                   
-        "Nanjing Yingtian Avenue Yangtze River Tunnel",
-        "南京应天大街长江隧道",
-        "南京應天大街長江隧道",
-    }
+    
 
     # FIRST PASS — choose ONE best JSON per topic                        
     topics = {}  # topics[topic_key] = {"data": <json dict>, "json_name": "..."}   
@@ -700,6 +738,13 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             en_summary   = (data.get("summary_en") or "").strip()
             hans_summary = (data.get("summary_zh_hans") or "").strip()
             hant_summary = (data.get("summary_zh_hant") or "").strip()
+
+            # CHANGE: strip raw wiki [[...]] markup from summaries so it
+            # doesn't create visible brackets or broken internal links.
+            en_summary   = strip_wikilinks_markup(en_summary)
+            hans_summary = strip_wikilinks_markup(hans_summary)
+            hant_summary = strip_wikilinks_markup(hant_summary)
+            # END CHANGE
 
             # If "English" summary is actually Chinese, treat it as missing    
             if en_summary and looks_like_chinese(en_summary):                  

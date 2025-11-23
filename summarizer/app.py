@@ -20,6 +20,21 @@ SUMMARIZER_SKIP_LISTS   = os.getenv("SUMMARIZER_SKIP_LISTS", "1")
 MIN_INPUT_CHARS         = int(os.getenv("MIN_INPUT_CHARS", "280"))
 MAX_LLM_CHARS           = int(os.getenv("MAX_LLM_CHARS", "3500"))
 
+# CHANGE: helper to remove raw wiki-style links like [[Target]] or [[Target|Label]]
+# from the source text before we send it to the LLM.
+def strip_wikilinks_markup(text: Optional[str]) -> Optional[str]:
+    if not text:
+        return text
+
+    def _repl(m: re.Match) -> str:
+        inner = m.group(1)
+        if "|" in inner:
+            return inner.split("|")[-1]
+        return inner
+
+    return re.sub(r"\[\[([^\]]+)\]\]", _repl, text)
+# END CHANGE
+
 
 def strip_chinese_notes(text: Optional[str]) -> Optional[str]:
     """
@@ -112,13 +127,6 @@ def translate_zh_from_en(en_summary: str, use_trad: bool, main_title: Optional[s
     return chat_once(sys_prompt, en_summary)
 
 
-def translate_zh(en_summary: str, use_trad: bool, main_title: Optional[str]) -> Optional[str]:
-    """
-    Backwards-compatible wrapper that forwards to translate_zh_from_en.
-    This matches the name used in process_once().
-    """
-    return translate_zh_from_en(en_summary, use_trad, main_title)
-
 def translate_en_from_zh(ch_summary: str) -> Optional[str]:
     return chat_once(
         "Translate the following Chinese encyclopedic summary into natural English. "
@@ -137,19 +145,19 @@ def convert_hans_to_hant(hans_text: str) -> Optional[str]:
 
 def process_once() -> int:
     wrote = 0
+
     for json_path in sorted(CLEAN_DIR.rglob("*.json")):
         out_path = SUMMARY_DIR / json_path.name
         if out_path.exists():
             continue
 
-        data = {}
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
-            url      = data.get("url") or ""
+            url = data.get("url") or ""
             doc_type = (data.get("doc_type") or "").lower()
-            lang     = (data.get("lang") or "").lower()
+            lang = (data.get("lang") or "").lower()
 
-            categories   = data.get("categories") or []
+            categories = data.get("categories") or []
             derived_tags = set()
 
             CATEGORY_TAG_MAP = {
@@ -190,7 +198,7 @@ def process_once() -> int:
                 if tag:
                     derived_tags.add(tag)
 
-            # keep a generic 'summary' tag
+            # Always keep a generic 'summary' tag too
             derived_tags.add("summary")
             data["tags"] = sorted(derived_tags)
 
@@ -203,112 +211,153 @@ def process_once() -> int:
                 print(f"[summarizer] skip {doc_type or 'unknown'} {url}", flush=True)
                 continue
 
-            # choose source texts by language  
-            raw_content   = (data.get("content") or "").strip()
-            zh_hans_text  = (data.get("content_zh_hans") or "").strip()
-            zh_hant_text  = (data.get("content_zh_hant") or "").strip()
+            # -------- LANGUAGE NORMALISATION --------
+            # Base content fields
+            content_main = (data.get("content") or "").strip()
+            zh_hans_text = (data.get("content_zh_hans") or "").strip()
+            zh_hant_text = (data.get("content_zh_hant") or "").strip()
             zh_title_hans = (data.get("zh_title_hans") or "").strip() or None
 
-            # English text is only taken from `content` if this page is English
-            en_text = raw_content if lang.startswith("en") else ""
+            # CHANGE: strip any leftover wiki [[...]] markup from the raw
+            # article text before sending it to the LLM.
+            content_main = strip_wikilinks_markup(content_main)
+            zh_hans_text = strip_wikilinks_markup(zh_hans_text)
+            zh_hant_text = strip_wikilinks_markup(zh_hant_text)
+            # END CHANGE
 
-            # For Chinese pages, if we don't have variant-specific fields,
-            # use `content` as the Chinese source.
-            if lang.startswith("zh") and not zh_hans_text and not zh_hant_text:
-                # treat it as Simplified source by default
-                zh_hans_text = raw_content
 
+            # If this JSON is actually a Chinese page and content_zh_* are empty,
+            # treat `content` as Chinese (Simplified) instead of English.
+            is_zh_page = (
+                lang.startswith("zh")
+                or url.startswith("https://zh.wikipedia.org")
+            )
+            is_en_page = (
+                lang.startswith("en")
+                or url.startswith("https://en.wikipedia.org")
+            )
+
+            if is_zh_page and content_main and not (zh_hans_text or zh_hant_text):
+                zh_hans_text = content_main
+                content_main = ""  # do not treat as English
+
+            # English source text: only when it's really an English article
+            en_source = content_main if is_en_page else ""
+
+            # Short-content guard: if *none* language has enough text, skip
             if (
-                len(en_text) < MIN_INPUT_CHARS
-                and not (
-                    len(zh_hans_text) >= MIN_INPUT_CHARS
-                    or len(zh_hant_text) >= MIN_INPUT_CHARS
-                )
+                len(en_source) < MIN_INPUT_CHARS
+                and len(zh_hans_text) < MIN_INPUT_CHARS
+                and len(zh_hant_text) < MIN_INPUT_CHARS
             ):
                 print(f"[summarizer] too-short content {url}", flush=True)
                 continue
 
             print(
                 f"[summarizer] Summarizing {json_path.relative_to(DATA_DIR)} "
-                f"(lang={lang}, zh_url={bool(data.get('zh_url'))})",
+                f"(lang={lang or 'unknown'}, zh_url={bool(data.get('zh_url'))})",
                 flush=True,
             )
 
-            # English summary (rule 1)  
-            # 1. If there is an English article: summarize that.
-            # 2. Otherwise we will generate English later by translating from Chinese.
-            en = None
-            if en_text and len(en_text) >= 80 and lang.startswith("en"):
-                en = summarize_en(en_text)
+            # -------- MULTILINGUAL LOGIC --------
+            en_summary: Optional[str] = None
+            hans_summary: Optional[str] = None
+            hant_summary: Optional[str] = None
 
-            # Chinese summaries (rules 2 & 3)  
-            have_zh_page = bool(
+            have_zh_article = bool(
                 (data.get("zh_url") or "").strip()
                 or zh_hans_text
                 or zh_hant_text
-                or lang.startswith("zh")
             )
 
-            hans = None  # Simplified
-            hant = None  # Traditional
-
-            if have_zh_page:
-                # There IS some Chinese page.
-                # Simplified: prefer real Chinese article text.
-                if zh_hans_text and len(zh_hans_text) >= MIN_INPUT_CHARS:
-                    hans = summarize_zh(
+            # 1) Chinese summaries first if there is a zh article
+            if have_zh_article:
+                # Simplified from zh article (preferred); if only zh-hant exists,
+                # we still ask for Simplified output.
+                if len(zh_hans_text) >= MIN_INPUT_CHARS:
+                    hans_summary = summarize_zh(
                         zh_hans_text, use_trad=False, main_title=zh_title_hans
                     )
-                elif zh_hant_text and len(zh_hant_text) >= MIN_INPUT_CHARS:
-                    # Only zh-Hant article: still ask model to produce Simplified.
-                    hans = summarize_zh(
+                elif len(zh_hant_text) >= MIN_INPUT_CHARS:
+                    hans_summary = summarize_zh(
                         zh_hant_text, use_trad=False, main_title=zh_title_hans
                     )
-                elif en:
-                    # No usable Chinese text: fallback EN → Hans.
-                    hans = translate_zh(en, use_trad=False, main_title=zh_title_hans)
 
-                # Traditional: always derived from Simplified when a zh page exists
-                if hans:
-                    hant = chat_once(
-                        "Convert the following Simplified Chinese text into Traditional Chinese. "
-                        "Do not change the meaning.",
-                        hans,
-                    )
-                elif en:
-                    # Edge case: we somehow don't have Hans; fall back EN → Hant.
-                    hant = translate_zh(en, use_trad=True, main_title=zh_title_hans)
+                # Traditional: if we have Hans, convert; otherwise we may later
+                # fall back from English.
+                if hans_summary:
+                    hant_summary = convert_hans_to_hant(hans_summary)
+
+            # 2) English summary
+            # Rule: from English article if it exists; otherwise from Chinese.
+            if len(en_source) >= MIN_INPUT_CHARS:
+                en_summary = summarize_en(en_source)
+
+            if not en_summary:
+                # No English article → derive from Chinese summary
+                if hans_summary:
+                    en_summary = translate_en_from_zh(hans_summary)
+                elif hant_summary:
+                    en_summary = translate_en_from_zh(hant_summary)
+
+            # 3) If there is NO Chinese article at all, generate Chinese
+            # summaries purely by translating the English summary.
+            if not have_zh_article:
+                if en_summary:
+                    if not hans_summary:
+                        hans_summary = translate_zh_from_en(
+                            en_summary, use_trad=False, main_title=zh_title_hans
+                        )
+                    if not hant_summary:
+                        # For the "no Chinese article" case, spec says:
+                        # translate English separately into both Hans and Hant,
+                        # not Hans→Hant conversion.
+                        hant_summary = translate_zh_from_en(
+                            en_summary, use_trad=True, main_title=zh_title_hans
+                        )
+
             else:
-                # NO Chinese page at all → both Chinese summaries from English.
-                if en:
-                    hans = translate_zh(en, use_trad=False, main_title=zh_title_hans)
-                    hant = translate_zh(en, use_trad=True, main_title=zh_title_hans)
+                # There *is* a Chinese article but we may still be missing Hans/Hant
+                # (e.g. Chinese text too short). In that case, use English summary
+                # as the fallback source according to your rules.
 
-            # Clean note lines like "注：..."
-            hans = strip_chinese_notes(hans)
-            hant = strip_chinese_notes(hant)
-
-            # Ensure we always have an English summary  
-            # If there was no English article, translate from Chinese (Hans preferred).
-            if not en:
-                chinese_source_for_en = hans or hant
-                if chinese_source_for_en:
-                    en = chat_once(
-                        "Translate the following Chinese encyclopedic summary into natural English. "
-                        "Keep it concise and factual (3–6 sentences, <150 words). "
-                        "Plain text only.",
-                        chinese_source_for_en,
+                # Simplified Chinese: from zh article when possible, otherwise from EN.
+                if not hans_summary and en_summary:
+                    hans_summary = translate_zh_from_en(
+                        en_summary, use_trad=False, main_title=zh_title_hans
                     )
-                    if en:
-                        en = en.strip()
 
-            data["summary_en"]      = en
-            data["summary_zh_hans"] = hans
-            data["summary_zh_hant"] = hant
+                # Traditional Chinese:
+                # - if we have a Hans summary (from zh article or EN), prefer converting Hans→Hant
+                # - otherwise, translate from EN directly.
+                if not hant_summary:
+                    if hans_summary:
+                        hant_summary = convert_hans_to_hant(hans_summary)
+                    elif en_summary:
+                        hant_summary = translate_zh_from_en(
+                            en_summary, use_trad=True, main_title=zh_title_hans
+                        )
+
+            # Cleanup Chinese note lines
+            hans_summary = strip_chinese_notes(hans_summary)
+            hant_summary = strip_chinese_notes(hant_summary)
+
+            # Final safety: ensure we *do* have an English summary.
+            if not en_summary:
+                chinese_source_for_en = hans_summary or hant_summary
+                if chinese_source_for_en:
+                    en_summary = translate_en_from_zh(chinese_source_for_en)
+                    if en_summary:
+                        en_summary = en_summary.strip()
+
+            data["summary_en"] = en_summary
+            data["summary_zh_hans"] = hans_summary
+            data["summary_zh_hant"] = hant_summary
 
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(
-                json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+                json.dumps(data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
             )
             print(f"[summarizer] ✅ Saved summary to {out_path}", flush=True)
             wrote += 1
@@ -317,7 +366,6 @@ def process_once() -> int:
             print(f"[WARN] Failed {json_path}: {e}", flush=True)
 
     return wrote
-
 
 
 if __name__ == "__main__":
