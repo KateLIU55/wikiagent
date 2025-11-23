@@ -1,29 +1,5 @@
-#!/usr/bin/env python3
 # Author: Marcelo Villalobos, Juan Quintana, Kate Liu
 # **Date: November 2025**
-
-# print("Publisher service running...")
-
-# import os, time, sys, signal
-
-# def _graceful_exit(signum, frame):
-#     print("Shutting down...", flush=True)
-#     sys.exit(0)
-
-# signal.signal(signal.SIGINT, _graceful_exit)   # Ctrl+C / docker stop
-# signal.signal(signal.SIGTERM, _graceful_exit)  # docker stop
-
-# def keep_alive(name="service"):
-#     interval = int(os.getenv("IDLE_INTERVAL", "60"))  # seconds
-#     print(f"{name} idle loop started (interval={interval}s)", flush=True)
-#     while True:
-#         time.sleep(interval)
-
-# if __name__ == "__main__":
-#     print("Publisher service running...", flush=True)
-#     keep_alive(name="publisher")
-
-# Adding this for the publisher section
 
 #!/usr/bin/env python3
 from enum import auto
@@ -31,7 +7,6 @@ import os, json, subprocess, hashlib, re
 from pathlib import Path
 from datetime import datetime
 import textwrap
-
 
 # Read environment variables for directories
 DATA_DIR     = Path(os.getenv("DATA_DIR", "/data"))
@@ -211,12 +186,11 @@ def create_homepage():
 <title>Nanjing Knowledge Hub</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <style>
-    /* ===== COLOR THEME ===== */
     :root {
-        --bg: #eef1f7;           /* soft light gray */
-        --card: #ffffff;         /* white card */
-        --accent: #182955;       /* updated dark blue */
-        --accent-light: #e7ecff; /* soft blue hover */
+        --bg: #eef1f7;
+        --card: #ffffff;
+        --accent: #182955;
+        --accent-light: #e7ecff;
         --text-muted: #666;
         --border: #d9dce3;
         --shadow: rgba(0,0,0,0.12);
@@ -227,8 +201,6 @@ def create_homepage():
         font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica Neue, Arial;
         background: #f4f4f4;
         color: #222;
-
-        /* Center everything vertically + horizontally */
         min-height: 100vh;
         display: flex;
         flex-direction: column;
@@ -239,13 +211,12 @@ def create_homepage():
     }
 
     h1 {
-        margin: 0 0 20px;
-        font-weight: 600;
-        color: var(--accent-light);
-        text-align: center;
+        margin: 0;
         font-size: 48px;
+        font-weight: 700;
         color: var(--accent);
-        letter-spacing: 0.3px;
+        text-align: center;
+        letter-spacing: 0.4px;
     }
 
     hr {
@@ -254,23 +225,17 @@ def create_homepage():
         height: 3px;
         background: var(--accent);
         border: none;
-        margin: 8px 0 0;
+        margin: 8px 0 34px;
         border-radius: 2px;
     }
 
     .wrapper {
-        background: var(--card);
+        background: linear-gradient(145deg, #ffffff, #f4f6fb);
         width: 100%;
         max-width: 650px;
         padding: 36px 32px 48px;
         border-radius: 18px;
         box-shadow: 0 4px 20px var(--shadow);
-        animation: fadeIn 0.4s ease;
-    }
-
-    @keyframes fadeIn {
-        from { opacity: 0; transform: translateY(10px); }
-        to   { opacity: 1; transform: translateY(0); }
     }
 
     p.lead {
@@ -280,10 +245,16 @@ def create_homepage():
         font-size: 15px;
     }
 
-    /* ===== SEARCH AREA ===== */
     .search-container {
         position: relative;
         width: 100%;
+    }
+
+    .infoBox {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 12px;
     }
 
     #search {
@@ -304,7 +275,6 @@ def create_homepage():
         box-shadow: 0 0 0 3px var(--accent-light);
     }
 
-    /* ===== OPEN BUTTON ===== */
     #openBtn {
         position: absolute;
         right: 6px;
@@ -316,23 +286,30 @@ def create_homepage():
         color: white;
         border: none;
         font-size: 15px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
         cursor: pointer;
         transition: background-color 0.15s ease;
     }
 
-    #openBtn:hover {
-        background: #0f1b38;
-    }
+    #openBtn:hover { background: #0f1b38; }
+    #openBtn.hidden { opacity: 0; pointer-events: none; }
 
-    #openBtn.hidden {
-        opacity: 0;
-        pointer-events: none;
+    /* New Go to Wiki button */
+    #gotoBtn {
+        background: #182955;
+        color: white;
+        padding: 10px 16px;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        font-size: 15px;
+        font-weight: 500;
+        height: 42px;
+        white-space: nowrap;
+        margin-bottom: 20px;
     }
-
-    /* ===== DROPDOWN RESULTS ===== */
+    
+    #gotoBtn:hover { background: #0f1b38; }
+    
     #results {
         position: absolute;
         left: 0;
@@ -375,10 +352,14 @@ def create_homepage():
 <body>
 <h1>Nanjing Knowledge Hub Wiki</h1>
 <hr>
-<br><br/>
-<div class="wrapper">
-    <p class="lead">Search articles and open them directly in the wiki.</p>
 
+<div class="wrapper">
+    <div class="infoBox">
+        <p class="lead">Search any topic and open it inside the wiki or</p>
+        <span>
+            <button id="gotoBtn">Go to Wiki</button>
+        </span>
+    </div>
     <div class="search-container">
         <input id="search" autocomplete="off" placeholder="Start typing a topic…">
         <button id="openBtn" class="hidden">Open</button>
@@ -387,12 +368,23 @@ def create_homepage():
 </div>
 
 <script>
-// Load index.json
-async function loadIndex() {
-    const res = await fetch("output/tiddlers/index.json");
-    return res.json();
+
+// Load summaries directly from a static file generated by the publisher:
+// output/summaries.json
+
+async function loadSummaries() {
+    try {
+        const res = await fetch("output/summaries.json");
+        if (!res.ok) return [];
+        const arr = await res.json();
+        return Array.isArray(arr) ? arr : [];
+    } catch (err) {
+        console.warn("Failed to load summaries:", err);
+        return [];
+    }
 }
 
+//UI + exact-match search behavior
 let TIDDLERS = [];
 let filtered = [];
 let activeIndex = -1;
@@ -400,23 +392,9 @@ let activeIndex = -1;
 const input = document.getElementById("search");
 const results = document.getElementById("results");
 const openBtn = document.getElementById("openBtn");
+const gotoBtn = document.getElementById("gotoBtn");
 
-function fuzzyScore(str, query){
-    str = str.toLowerCase();
-    query = query.toLowerCase();
-    let score = 0, i = 0;
-
-    for(const q of query){
-        const pos = str.indexOf(q, i);
-        if(pos === -1) return 0;
-        score += Math.max(0, 12 - (pos - i));
-        i = pos + 1;
-    }
-    if(str.includes(query)) score += 10;
-    return score;
-}
-
-function render(){
+function render() {
     results.innerHTML = "";
 
     if(!input.value.trim()){
@@ -435,7 +413,7 @@ function render(){
     filtered.forEach((t, idx) => {
         const div = document.createElement("div");
         div.className = "result-item" + (idx === activeIndex ? " active" : "");
-        div.textContent = t;
+        div.textContent = t.title;
         div.addEventListener("click", () => select(idx));
         results.appendChild(div);
     });
@@ -444,19 +422,14 @@ function render(){
     openBtn.classList.remove("hidden");
 }
 
-function select(idx){
-    if(idx < 0 || idx >= filtered.length) return;
-
-    const title = filtered[idx];
-    input.value = title;
-
-    const frag = encodeURIComponent(title);
-
-    window.location.href = `output/index.html#${frag}`;
+function select(idx) {
+    const title = filtered[idx].title;
+    const encoded = encodeURIComponent(title);
+    window.location.href = `output/index.html#${encoded}`;
 }
 
 input.addEventListener("input", () => {
-    const q = input.value.trim();
+    const q = input.value.trim().toLowerCase();
     activeIndex = 0;
 
     if(!q){
@@ -465,11 +438,13 @@ input.addEventListener("input", () => {
         return;
     }
 
-    const scored = TIDDLERS.map(t => ({t, score: fuzzyScore(t, q)}))
-        .filter(x => x.score > 0)
-        .sort((a,b) => b.score - a.score);
+    // Exact substring match (title OR summary)
+    filtered = TIDDLERS.filter(t => {
+        const title = (t.title || "").toLowerCase();
+        const summary = (t.summary || "").toLowerCase();
 
-    filtered = scored.map(x => x.t);
+        return title.includes(q) || summary.includes(q);
+    });
     render();
 });
 
@@ -510,15 +485,21 @@ openBtn.addEventListener("click", () => {
     if(filtered.length && activeIndex >= 0) select(activeIndex);
 });
 
+gotoBtn.addEventListener("click", () => {
+    window.location.href = `output/index.html`;
+});
+
 document.addEventListener("click", ev => {
     if(!ev.target.closest(".search-container")){
         results.style.display = "none";
     }
 });
 
+// Start loading summaries from static file
 (async () => {
-    TIDDLERS = await loadIndex();
+    TIDDLERS = await loadSummaries();
 })();
+
 </script>
 
 </body>
@@ -627,8 +608,6 @@ def create_tiddlers(en_titles, zh_titles) -> int:
     """
     tiddlers_dir = WIKI_WORKDIR / "tiddlers"
     tiddlers_dir.mkdir(parents=True, exist_ok=True)
-
-    
 
     # FIRST PASS — choose ONE best JSON per topic                        
     topics = {}  # topics[topic_key] = {"data": <json dict>, "json_name": "..."}   
@@ -833,31 +812,31 @@ def create_tiddlers(en_titles, zh_titles) -> int:
     return count
 
 
-# Scan all .tid files to create index.json to use with homepage.
-def generate_tiddler_index():
-    
-    tiddlers_dir = WIKI_WORKDIR / "tiddlers"
-    titles = []
-
-    for tid in tiddlers_dir.glob("*.tid"):
+# Generate a single static summaries file for the homepage to load directly
+def generate_summaries_output():
+    entries = []
+    for f in SUMMARY_DIR.glob("*.json"):
+        if not f.is_file():
+            continue
         try:
-            text = tid.read_text(encoding="utf-8")
-            match = re.search(r"^title:\s*(.+)$", text, re.MULTILINE)
-            if match:
-                titles.append(match.group(1).strip())
-        except:
-            pass
+            data = json.loads(f.read_text(encoding="utf-8-sig"))
+            title = data.get("title") or f.stem
+            summary = data.get("summary_en") or data.get("summary") or ""
+            entries.append({
+                "title": title,
+                "summary": summary
+            })
+        except Exception as e:
+            print(f"[WARN] skipping {f.name}: {e}", flush=True)
 
-    # Sort titles for consistency
-    titles.sort()
+    entries.sort(key=lambda x: x["title"].lower())
 
-    output_dir = SITE_DIR / "output" / "tiddlers"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    out = SITE_DIR / "output"
+    out.mkdir(parents=True, exist_ok=True)
+    dest = out / "summaries.json"
+    dest.write_text(json.dumps(entries, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    index_path = output_dir / "index.json"
-    index_path.write_text(json.dumps(titles, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    print(f"[publisher] Created tiddler index with {len(titles)} titles")
+    print(f"[publisher] Wrote summaries output to {dest} ({len(entries)} entries)")
 
 def create_tag_tiddlers():
     """
@@ -997,6 +976,24 @@ def inject_tiddlers():
     </$list>
     """).strip()
 
+    # intro tiddler for when user uses Go to Wiki button.
+    intro_tiddler = (
+        "title: Welcome to the Nanjing Knowledge Hub Wiki\n"
+        "type: text/vnd.tiddlywiki\n\n"
+        "This wiki is dedicated to providing comprehensive information about Nanjing, "
+        "a vibrant city in China known for its rich history, culture, and modern development. "
+        "Here, you will find summarized Wikipedia articles covering various aspects of Nanjing, "
+        "including its landmarks, educational institutions, cultural events, and more. "
+        "Explore the articles, learn about the city's heritage, and stay updated with the latest "
+        "developments in this dynamic metropolis.\n"
+    )
+    # Default tiddler to open welcome tiddler.
+    default_tiddler = (
+        "title: $:/DefaultTiddlers\n"
+        "type: text/vnd.tiddlywiki\n\n"
+        "[[Welcome to the Nanjing Knowledge Hub Wiki]]\n"
+    )
+
     # language state + picker
     lang_state = textwrap.dedent("""
     title: $:/state/wiki-language
@@ -1021,7 +1018,7 @@ def inject_tiddlers():
     """).strip()
 
     # Macros 
-    lang_macros = textwrap.dedent(r"""
+    lang_macros = textwrap.dedent("""
     title: $:/plugins/wiki/lang-macros
     tags: $:/tags/Macro
     type: text/vnd.tiddlywiki
@@ -1041,7 +1038,7 @@ def inject_tiddlers():
     \end
     """).strip()
 
-    tag_label_macro = textwrap.dedent(r"""
+    tag_label_macro = textwrap.dedent("""
     title: $:/plugins/wiki/tag-label-macro
     tags: $:/tags/Macro
     type: text/vnd.tiddlywiki
@@ -1062,7 +1059,7 @@ def inject_tiddlers():
     """).strip()
 
     # List items & titles 
-    list_item = textwrap.dedent(r"""
+    list_item = textwrap.dedent("""
     title: $:/core/ui/ListItemTemplate
     type: text/vnd.tiddlywiki
 
@@ -1073,7 +1070,7 @@ def inject_tiddlers():
     </div>
     """).strip()
 
-    title_default = textwrap.dedent(r"""
+    title_default = textwrap.dedent("""
     title: $:/core/ui/ViewTemplate/title/default
     type: text/vnd.tiddlywiki
 
@@ -1092,7 +1089,7 @@ def inject_tiddlers():
     """).strip()
 
 
-    recent_sidebar = textwrap.dedent(r"""
+    recent_sidebar = textwrap.dedent("""
     title: $:/core/ui/SideBar/Recent
     tags: $:/tags/SideBar
     caption: {{$:/language/SideBar/Recent/Caption}}
@@ -1143,7 +1140,7 @@ def inject_tiddlers():
     """).strip()
 
 
-    tag_template = textwrap.dedent(r"""
+    tag_template = textwrap.dedent("""
     title: $:/core/ui/TagTemplate
     type: text/vnd.tiddlywiki
 
@@ -1192,7 +1189,7 @@ def inject_tiddlers():
     """).strip()
 
 
-    tag_clickoutside_startup = textwrap.dedent(r"""
+    tag_clickoutside_startup = textwrap.dedent("""
     title: $:/plugins/wiki/tag-clickoutside-startup
     type: application/javascript
     module-type: startup
@@ -1344,7 +1341,7 @@ def inject_tiddlers():
 
     # Ensure Tag Manager does NOT show an empty first bullet when the tag name
     # is blank. We only render a <li> when currentTiddler is non-empty.   
-    tagmanager_listitem = textwrap.dedent(r"""
+    tagmanager_listitem = textwrap.dedent("""
     title: $:/plugins/tiddlywiki/tag-manager/ui/TagListItemTemplate
     type: text/vnd.tiddlywiki
 
@@ -1372,6 +1369,8 @@ def inject_tiddlers():
     (tiddlers_dir / "__tagmanager-listitem.tid").write_text(tagmanager_listitem, encoding="utf-8")
     (tiddlers_dir / "__tag-styles.tid").write_text(tag_styles, encoding="utf-8")
     (tiddlers_dir / "__tag-clickoutside-startup.tid").write_text(tag_clickoutside_startup, encoding="utf-8")
+    (tiddlers_dir / "__default-tiddler.tid").write_text(default_tiddler, encoding="utf-8")
+    (tiddlers_dir / "__intro.tid").write_text(intro_tiddler, encoding="utf-8")
 
 
 # Creates the wiki by invoking TiddlyWiki CLI
@@ -1391,7 +1390,6 @@ def build_wiki():
 
     create_tag_tiddlers()
 
-
     outdir = WIKI_WORKDIR / "output"
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -1409,15 +1407,13 @@ def build_wiki():
     subprocess.run(["cp", "-r", str(outdir) + "/", str(SITE_DIR)], check=True)
     print(f"[publisher] Copied wiki to {SITE_DIR}/output", flush=True)
 
-
 def main():
     print(f"[publisher] SUMMARY_DIR={SUMMARY_DIR} SITE_DIR={SITE_DIR}", flush=True)
     build_wiki()
-    generate_tiddler_index()
+    generate_summaries_output()
     create_homepage()
     inject_search_handler()
     print("[publisher] Done.", flush=True)
-
 
 if __name__ == "__main__":
     main()
