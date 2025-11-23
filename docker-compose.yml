@@ -65,9 +65,7 @@ services:
       SITE_DIR: /site
       BRAIN_BASE_URL: http://brain:8000
       DB_PATH: /data/wiki.sqlite
-      
       SUMMARY_DIR: /data/summarized
-  
       WIKI_WORKDIR: /tmp/wiki
       DEPLOY: "0"
     command: python app.py
@@ -90,12 +88,12 @@ services:
     container_name: brain
     environment:
       DB_PATH: /data/wiki.sqlite
-    #  LLM_API_BASE: http://anjso.ddns.net:13001/api/v1/openai
-    #  LLM_API_KEY: ${LLM_API_KEY}
-    #  MODEL: anjso
-      LLM_BASE_URL: http://brain:8000/v1   # talk to brain’s OpenAI-style proxy
-      LLM_API_KEY: local
-      LLM_MODEL: llama-3.1-8b-instruct
+      LLM_API_BASE: http://anjso.ddns.net:13001/api/v1/openai
+      LLM_API_KEY: ${LLM_API_KEY}
+      MODEL: anjso
+    #  LLM_BASE_URL: http://brain:8000/v1   # talk to brain’s OpenAI-style proxy
+    #  LLM_API_KEY: local
+    #  LLM_MODEL: meta-llama-3.1-8b-instruct
     volumes:
       - ./data:/data
     depends_on:
