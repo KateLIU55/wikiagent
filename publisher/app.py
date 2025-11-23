@@ -362,7 +362,7 @@ def create_homepage():
     </div>
     <div class="search-container">
         <input id="search" autocomplete="off" placeholder="Start typing a topic…">
-        <button id="openBtn" class="hidden">Open</button>
+        <button id="openBtn" >Go to Wiki</button>
         <div id="results"></div>
     </div>
 </div>
@@ -399,14 +399,12 @@ function render() {
 
     if(!input.value.trim()){
         results.style.display = "none";
-        openBtn.classList.add("hidden");
         return;
     }
 
     if(filtered.length === 0){
         results.innerHTML = "<div class='no-results'>No results found</div>";
         results.style.display = "block";
-        openBtn.classList.add("hidden");
         return;
     }
 
@@ -482,7 +480,12 @@ function highlightScroll(){
 }
 
 openBtn.addEventListener("click", () => {
-    if(filtered.length && activeIndex >= 0) select(activeIndex);
+    if (filtered.length && activeIndex >= 0) {
+        select(activeIndex);
+    } else {
+        // No specific article chosen → just open the wiki
+        window.location.href = "output/index.html";
+    }
 });
 
 gotoBtn.addEventListener("click", () => {
@@ -1069,8 +1072,8 @@ def inject_tiddlers():
     </$link>
     </div>
     """).strip()
-
-    title_default = textwrap.dedent("""
+   
+    title_default = textwrap.dedent(r"""
     title: $:/core/ui/ViewTemplate/title/default
     type: text/vnd.tiddlywiki
 
@@ -1086,6 +1089,46 @@ def inject_tiddlers():
       <$view field="title" />
     </$reveal>
     </h2>
+    """).strip()
+
+    # Welcome tiddler
+    welcome_tiddler = textwrap.dedent(r"""
+    title: Welcome to the Nanjing Knowledge Hub Wiki
+    type: text/vnd.tiddlywiki
+    zh_title_hans: 欢迎来到南京知识枢纽维基
+    zh_title_hant: 歡迎來到南京知識樞紐維基
+
+    <$reveal type="match" state="$:/state/wiki-language" text="zh-hans">
+    本维基致力于提供关于南京的全面信息。南京是中国一座充满活力的城市，
+    以其悠久的历史、丰富的文化和现代化的发展而闻名。在这里，
+    您可以找到涵盖南京各个方面的维基百科文章摘要，包括地标建筑、教育机构、
+    文化活动等等。浏览这些文章，了解这座城市的历史遗产，
+    并随时掌握这座充满活力的国际大都市的最新动态。
+    </$reveal>
+
+    <$reveal type="match" state="$:/state/wiki-language" text="zh-hant">
+    本維基致力於提供關於南京的全面資訊。南京是中國一個充滿活力的城市，
+    以其悠久的歷史、豐富的文化和現代化的發展而聞名。在這裡，
+    您可以找到涵蓋南京各個方面的維基百科文章摘要，包括地標建築、教育機構、
+    文化活動等等。瀏覽這些文章，了解這座城市的歷史遺產，
+    並隨時掌握這座充滿活力的國際大都市的最新動態。
+    </$reveal>
+
+    <$reveal type="match" state="$:/state/wiki-language" text="en">
+    This wiki is dedicated to providing comprehensive information about Nanjing,
+    a vibrant city in China known for its rich history, culture, and modern development.
+    Here, you will find summarized Wikipedia articles covering various aspects of Nanjing,
+    including its landmarks, educational institutions, cultural events, and more.
+    Explore the articles, learn about the city's heritage, and stay updated with the latest
+    developments in this dynamic metropolis.
+    </$reveal>
+    """).strip()
+
+    default_tiddlers = textwrap.dedent(r"""
+    title: $:/DefaultTiddlers
+    type: text/vnd.tiddlywiki
+
+    [[Welcome to the Nanjing Knowledge Hub Wiki]]
     """).strip()
 
 
@@ -1371,6 +1414,10 @@ def inject_tiddlers():
     (tiddlers_dir / "__tag-clickoutside-startup.tid").write_text(tag_clickoutside_startup, encoding="utf-8")
     (tiddlers_dir / "__default-tiddler.tid").write_text(default_tiddler, encoding="utf-8")
     (tiddlers_dir / "__intro.tid").write_text(intro_tiddler, encoding="utf-8")
+
+    # welcome + default-tiddlers
+    (tiddlers_dir / "__welcome.tid").write_text(welcome_tiddler, encoding="utf-8")
+    (tiddlers_dir / "__default-tiddlers.tid").write_text(default_tiddlers, encoding="utf-8")
 
 
 # Creates the wiki by invoking TiddlyWiki CLI
