@@ -20,7 +20,7 @@ SUMMARIZER_SKIP_LISTS   = os.getenv("SUMMARIZER_SKIP_LISTS", "1")
 MIN_INPUT_CHARS         = int(os.getenv("MIN_INPUT_CHARS", "280"))
 MAX_LLM_CHARS           = int(os.getenv("MAX_LLM_CHARS", "3500"))
 
-# CHANGE: helper to remove raw wiki-style links like [[Target]] or [[Target|Label]]
+# helper to remove raw wiki-style links like [[Target]] or [[Target|Label]]
 # from the source text before we send it to the LLM.
 def strip_wikilinks_markup(text: Optional[str]) -> Optional[str]:
     if not text:
@@ -33,7 +33,7 @@ def strip_wikilinks_markup(text: Optional[str]) -> Optional[str]:
         return inner
 
     return re.sub(r"\[\[([^\]]+)\]\]", _repl, text)
-# END CHANGE
+
 
 
 def strip_chinese_notes(text: Optional[str]) -> Optional[str]:
@@ -211,19 +211,19 @@ def process_once() -> int:
                 print(f"[summarizer] skip {doc_type or 'unknown'} {url}", flush=True)
                 continue
 
-            # -------- LANGUAGE NORMALISATION --------
+            # LANGUAGE NORMALISATION 
             # Base content fields
             content_main = (data.get("content") or "").strip()
             zh_hans_text = (data.get("content_zh_hans") or "").strip()
             zh_hant_text = (data.get("content_zh_hant") or "").strip()
             zh_title_hans = (data.get("zh_title_hans") or "").strip() or None
 
-            # CHANGE: strip any leftover wiki [[...]] markup from the raw
+            # strip any leftover wiki [[...]] markup from the raw
             # article text before sending it to the LLM.
             content_main = strip_wikilinks_markup(content_main)
             zh_hans_text = strip_wikilinks_markup(zh_hans_text)
             zh_hant_text = strip_wikilinks_markup(zh_hant_text)
-            # END CHANGE
+            
 
 
             # If this JSON is actually a Chinese page and content_zh_* are empty,
@@ -259,7 +259,7 @@ def process_once() -> int:
                 flush=True,
             )
 
-            # -------- MULTILINGUAL LOGIC --------
+            # MULTILINGUAL LOGIC
             en_summary: Optional[str] = None
             hans_summary: Optional[str] = None
             hant_summary: Optional[str] = None

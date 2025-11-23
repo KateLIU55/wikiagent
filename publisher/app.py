@@ -46,7 +46,7 @@ TUNNEL_TITLES = {
     "南京應天大街長江隧道",
 }
 
-# CHANGE: strip raw wiki-style links like [[Target]] or [[Target|Label]]
+# strip raw wiki-style links like [[Target]] or [[Target|Label]]
 # down to plain visible text so we don't carry Wikipedia markup into
 # our tiddlers and accidentally generate broken links.
 def strip_wikilinks_markup(text: str) -> str:
@@ -91,7 +91,7 @@ def build_title_index():
 
         title = (data.get("title") or json_path.stem).strip()
 
-        # CHANGE: normalize the canonical title so that the index matches
+        # normalize the canonical title so that the index matches
         # the final titles we actually use when creating tiddlers.
         raw_en_summary = (data.get("summary_en") or "").strip()
 
@@ -107,7 +107,7 @@ def build_title_index():
             derived = derive_english_title_from_summary(raw_en_summary)
             if derived:
                 title = derived
-        # END CHANGE
+        
 
         if title and has_summary:
             en_titles.append(title)
@@ -739,12 +739,12 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             hans_summary = (data.get("summary_zh_hans") or "").strip()
             hant_summary = (data.get("summary_zh_hant") or "").strip()
 
-            # CHANGE: strip raw wiki [[...]] markup from summaries so it
+            # strip raw wiki [[...]] markup from summaries so it
             # doesn't create visible brackets or broken internal links.
             en_summary   = strip_wikilinks_markup(en_summary)
             hans_summary = strip_wikilinks_markup(hans_summary)
             hant_summary = strip_wikilinks_markup(hant_summary)
-            # END CHANGE
+            
 
             # If "English" summary is actually Chinese, treat it as missing    
             if en_summary and looks_like_chinese(en_summary):                  
