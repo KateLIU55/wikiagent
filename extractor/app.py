@@ -196,7 +196,7 @@ def chinese_variants_from_en_html(en_html: bytes) -> tuple[str | None, str | Non
     soup = BeautifulSoup(en_html, "lxml")
     links = find_interlanguage_links(soup)
 
-    zh_url = links.get("zh_hans") or links.get("zh")  # use zh as Hans if only one exists
+    zh_url = links.get("zh_hans") or links.get("zh") or links.get("zh_hant")
     zh_hant_url = links.get("zh_hant")
 
     hans_title = None
@@ -292,8 +292,16 @@ def process_once() -> int:
             zh_url, zh_title_hans, content_zh_hans, content_zh_hant = chinese_variants_from_en_html(raw)
         elif "zh.wikipedia.org" in url:
             # We’re already on the Chinese page; treat this content as Simplified Chinese by default
-            content_zh_hans = text
+                content_zh_hans = text
+                zh_url = url
+                zh_title_hans = title
 
+
+        # Collect raw Wikipedia categories (for tagging later)
+        raw_categories = [
+            a.get_text(" ", strip=True)
+            for a in soup.select("#mw-normal-catlinks a")
+        ]
 
         out = {
             "page_id": page_id,
@@ -309,6 +317,7 @@ def process_once() -> int:
             "zh_title_hans": zh_title_hans,
             "content_zh_hans": content_zh_hans,
             "content_zh_hant": content_zh_hant,
+            "categories": raw_categories,
         }
 
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
