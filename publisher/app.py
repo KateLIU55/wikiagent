@@ -5,7 +5,7 @@
 from enum import auto
 import os, json, subprocess, hashlib, re
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 import textwrap
 
 # Read environment variables for directories
@@ -743,7 +743,7 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             en_source = (data.get("url") or "").strip()
             zh_source = (data.get("zh_url") or "").strip()
 
-            created = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+            created = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
             sid     = hashlib.sha1(title.encode("utf-8")).hexdigest()[:8]
             fname   = f"{slugify(title)}-{sid}.tid"
 
