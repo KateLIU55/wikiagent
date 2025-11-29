@@ -12,8 +12,17 @@ OUT_DIR  = os.path.join(DATA_DIR, "clean")
 DB_PATH  = os.getenv("DB_PATH", "/data/wiki.sqlite")
 INTERVAL = int(os.getenv("IDLE_INTERVAL", "30"))  # seconds
 
-os.makedirs(OUT_DIR, exist_ok=True)
-
+def ensure_out_dir() -> None:
+    """Create OUT_DIR if possible, but don't crash on read-only filesystems."""
+    try:
+        os.makedirs(OUT_DIR, exist_ok=True)
+    except OSError as e:
+        # On macOS running tests, /data may be read-only (Errno 30).
+        # In that case, skip creating it instead of crashing import.
+        if getattr(e, "errno", None) == 30:
+            return
+        raise
+        
 EXTRACTOR_SKIP_CATEGORIES = os.getenv("EXTRACTOR_SKIP_CATEGORIES", "0")
 EXTRACTOR_SKIP_LISTS      = os.getenv("EXTRACTOR_SKIP_LISTS", "1")
 EXTRACTOR_MIN_CHARS       = int(os.getenv("EXTRACTOR_MIN_CHARS", "180"))
@@ -329,6 +338,7 @@ def process_once() -> int:
 
 
 if __name__ == "__main__":
+    ensure_out_dir()
     print("Extractor service running...", flush=True)
     while True:
         n = process_once()
