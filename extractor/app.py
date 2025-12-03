@@ -1,5 +1,6 @@
+
 #!/usr/bin/env python3
-import os, json, glob, time, sqlite3, urllib.parse, re
+import os, json, glob, time, sqlite3, urllib.parse, re, sys, signal
 from bs4 import BeautifulSoup
 from sqlite3 import DatabaseError
 from urllib.request import Request, urlopen
@@ -240,8 +241,33 @@ def process_once() -> int:
     for html_path in sorted(glob.glob(os.path.join(RAW_DIR, "*.html"))):
         stem = os.path.splitext(os.path.basename(html_path))[0]
         out_path = os.path.join(OUT_DIR, f"{stem}.json")
+
+        # determine page_id & load meta early so we can see content_hash
+        try:  # compute page_id from filename
+            page_id = int(stem)
+        except ValueError:
+            page_id = None
+
+        # Load meta once here and derive current_hash
+        meta = load_meta(page_id) if page_id is not None else None
+        current_hash = meta.get("content_hash") if meta else None
+
+        # incremental extraction – skip if content_hash unchanged
         if os.path.exists(out_path):
-            continue
+            try:
+                existing = json.loads(open(out_path, "r", encoding="utf-8").read())
+                existing_hash = existing.get("content_hash")
+            except Exception:
+                existing_hash = None
+
+            if current_hash and existing_hash and existing_hash == current_hash:
+                print(
+                    f"[extractor] unchanged content_hash for page_id={page_id} "
+                    f"({stem}); skipping re-extract",
+                    flush=True,
+                )
+                continue
+
 
         try:
             with open(html_path, "rb") as f:
@@ -260,13 +286,10 @@ def process_once() -> int:
         text = extract_text_from_soup(soup)
 
         # id & metadata
-        try:
-            page_id = int(stem)
-        except ValueError:
-            page_id = None
-
+        # meta already loaded earlier; reuse it here
         url, retrieved_at = None, None
-        meta = load_meta(page_id) if page_id is not None else None
+        content_hash = current_hash  # track content_hash from meta
+
         if meta:
             url = meta.get("url")
             retrieved_at = meta.get("fetched_at")
@@ -290,7 +313,7 @@ def process_once() -> int:
             print(f"[extractor] skip {doc_type} page_id={page_id} url={url} chars={len(text or '')}", flush=True)
             continue
 
-        # NEW: pull Chinese variants (if they exist)
+        # pull Chinese variants (if they exist)
         # Basic language flag from domain
         lang = "zh" if ("zh.wikipedia.org" in (url or "")) else "en"
 
@@ -301,9 +324,9 @@ def process_once() -> int:
             zh_url, zh_title_hans, content_zh_hans, content_zh_hant = chinese_variants_from_en_html(raw)
         elif "zh.wikipedia.org" in url:
             # We’re already on the Chinese page; treat this content as Simplified Chinese by default
-                content_zh_hans = text
-                zh_url = url
-                zh_title_hans = title
+            content_zh_hans = text
+            zh_url = url
+            zh_title_hans = title
 
 
         # Collect raw Wikipedia categories (for tagging later)
@@ -327,6 +350,7 @@ def process_once() -> int:
             "content_zh_hans": content_zh_hans,
             "content_zh_hant": content_zh_hant,
             "categories": raw_categories,
+            "content_hash": content_hash,
         }
 
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -336,11 +360,30 @@ def process_once() -> int:
         wrote += 1
     return wrote
 
+# graceful shutdown handler for extractor
+def _graceful(signum, frame):  
+    print("Extractor shutting down...", flush=True)  
+    sys.exit(0)  
+
+# register signal handlers for Ctrl+C and docker stop
+signal.signal(signal.SIGINT, _graceful)   
+signal.signal(signal.SIGTERM, _graceful)  
+
+
+# to make automation + services play nicely together
+RUN_ONCE = os.getenv("RUN_ONCE") == "1"   # (existing)
 
 if __name__ == "__main__":
     ensure_out_dir()
     print("Extractor service running...", flush=True)
-    while True:
-        n = process_once()
-        if n == 0:
-            time.sleep(INTERVAL)
+    try:  # catch KeyboardInterrupt for clean exit
+        if RUN_ONCE:
+            process_once()  # (existing)
+        else:
+            while True:
+                n = process_once()  # (existing)
+                if n == 0:
+                    time.sleep(INTERVAL)  # (existing)
+    except KeyboardInterrupt:  
+        print("Extractor interrupted; shutting down...", flush=True)  
+    sys.exit(0)  

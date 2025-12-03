@@ -37,6 +37,19 @@ def strip_wikilinks_markup(text: str) -> str:
 
     return re.sub(r"\[\[([^\]]+)\]\]", _repl, text)
 
+# helper to collapse nested wiki-links like [[[[Foo]]]] -> [[Foo]]
+def squash_nested_wikilinks(text: str) -> str:
+    if not text:
+        return text
+    # Run a couple of times to catch deeper nesting if any.
+    for _ in range(3):
+        new_text = re.sub(r"\[\[\s*\[\[([^\]]+)\]\]\s*\]\]", r"[[\1]]", text)
+        if new_text == text:
+            break
+        text = new_text
+    return text
+
+
 
 # Autolink helpers
 def build_title_index():
@@ -121,18 +134,33 @@ def autolink_en(text: str, en_titles, current_title: str) -> str:
 
 def autolink_zh(text: str, zh_titles, current_title: str) -> str:
     """
-    Turn occurrences of Chinese titles into [[显示文字|EnglishTitle]] links.
-    (Chinese display text, link points to English-titled tiddler.)
+    Turn occurrences of Chinese titles into <$link> widgets:
+      <$link to="EnglishTitle">中文标题</$link>
+
+    We strip any leftover Wikipedia [[...]] markup first so we
+    don't ever build nested links.
     """
     if not text:
         return text
+
+    # remove wiki-style [[...]] first so we only ever
+    # autolink plain text phrases
+    text = strip_wikilinks_markup(text)
+    
 
     for phrase, canon_title in zh_titles:
         if canon_title == current_title:
             continue
         if phrase in text:
-            text = text.replace(phrase, f"[[{phrase}|{canon_title}]]")
+            # use <$link> instead of [[...|...]]
+            text = text.replace(
+                phrase,
+                f'<$link to="{canon_title}">{phrase}</$link>',
+            )
+            
+
     return text
+
 
 
 # create url-friendly for filenames
@@ -713,7 +741,12 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             hant_linked = autolink_zh(hant_summary, zh_titles, title)
 
             # Mark if this article actually has usable English content
-            has_en = "yes" if en_summary else "no"                              
+            has_en = "yes" if en_summary else "no"    
+
+            # pull timing metadata from summarizer output
+            retrieved_at = (data.get("retrieved_at") or "").strip()
+            last_summarized_at = (data.get("last_summarized_at") or "").strip()
+                                     
 
             # Language-aware body: EN / zh-Hans / zh-Hant
             body = textwrap.dedent(f"""
@@ -729,6 +762,12 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             {hant_linked}
             </$list>
             """).strip()
+
+            # as a final safety net, collapse any nested wiki-links
+            # that might still exist in the combined body, e.g. [[[[Foo]]]]
+            # → [[Foo]]. TiddlyWiki will then render them as normal links.
+            body = squash_nested_wikilinks(body)
+            
 
             # NOTE: we do NOT fall back to generic text here, because that      
             # might be Chinese; when language=English and en_summary is empty
@@ -767,8 +806,22 @@ def create_tiddlers(en_titles, zh_titles) -> int:
                 header_lines.append(f"zh_title_hans: {zh_title_hans}")
             if zh_title_hant:
                 header_lines.append(f"zh_title_hant: {zh_title_hant}")
+            if retrieved_at:
+                header_lines.append(f"retrieved_at: {retrieved_at}")
+            if last_summarized_at:
+                header_lines.append(f"last_summarized_at: {last_summarized_at}")
 
             header = "\n".join(header_lines)
+
+            # visible metadata footer inside the tiddler body
+            meta_parts = []
+            if retrieved_at:
+                meta_parts.append(f"retrieved: {retrieved_at}")
+            if last_summarized_at:
+                meta_parts.append(f"summarized: {last_summarized_at}")
+            meta_line = "meta: " + " ; ".join(meta_parts) if meta_parts else ""
+            
+
             tid = f"{header}\n\n{body}\n\n{source_line}\n"
 
             (tiddlers_dir / fname).write_text(tid, encoding="utf-8")

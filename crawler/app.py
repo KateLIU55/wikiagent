@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -275,21 +276,55 @@ def crawl():
     seen = set()
     stop_event = threading.Event()
 
-    enq = 0
+    # 1) SEEDS FIRST (same as before)
+    seed_enq = 0
     for s in cfg.get("seeds", []):
         su = canon_url(s)
         if su and allowed_by_patterns(su, include_res, exclude_res):
-            frontier.put((su, 0)); enq += 1
+            frontier.put((su, 0))
+            seed_enq += 1
         else:
             print(f"[seed-skip] {s}", flush=True)
-    print(f"[seed] enqueued={enq}", flush=True)
+    print(f"[seed] enqueued={seed_enq}", flush=True)
 
+    # 2) enqueue all known pages from DB for periodic re-check
+    #    This lets us revalidate up to ~900 pages that we've already crawled.
+    db_enq = 0
+    try:
+        conn_seed = db()
+        cur = conn_seed.cursor()
+        for url, depth in cur.execute("SELECT url, depth FROM pages"):
+            if not url:
+                continue
+            su = canon_url(url)
+            if not su:
+                continue
+
+            # Use stored depth if present, otherwise 0
+            try:
+                d = int(depth) if depth is not None else 0
+            except Exception:
+                d = 0
+
+            # Still respect include/exclude patterns
+            if allowed_by_patterns(su, include_res, exclude_res):
+                frontier.put((su, d))
+                db_enq += 1
+        conn_seed.close()
+    except Exception as e:
+        print(f"[warn] failed to enqueue existing pages from DB: {e!r}", flush=True)
+
+    print(f"[db] recheck_enqueued={db_enq}", flush=True)
+
+    # 3) rest is same as before
     limiter = RateLimiter(rps_per_host=rps)
     fetched = 0
+    visited = 0  # count URLs we actually processed
     fetch_lock = threading.Lock()
 
+
     def worker():
-        nonlocal fetched
+        nonlocal fetched, visited
         conn = sqlite3.connect(DB_PATH, timeout=30, check_same_thread=False)
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA busy_timeout=5000")
@@ -315,6 +350,12 @@ def crawl():
                         continue
                     seen.add(url)
 
+                    # ncrement visited count for this URL
+                    with fetch_lock:
+                        visited += 1
+                    
+
+
                     if honor_robots and not robots_ok(url):
                         print(f"[skip] robots disallow: {url}", flush=True)
                         frontier.task_done()
@@ -324,6 +365,27 @@ def crawl():
                     page_id, prev_etag, prev_lm = (
                         pid_etag_lm if isinstance(pid_etag_lm, tuple) else (pid_etag_lm, None, None)
                     )
+
+                    # auto-healing for missing raw/meta files
+                    raw_path  = os.path.join(RAW_DIR, f"{page_id}.html")
+                    meta_path = os.path.join(RAW_DIR, f"{page_id}.meta.json")
+                    raw_missing  = not os.path.exists(raw_path)
+                    meta_missing = not os.path.exists(meta_path)
+
+                    if raw_missing or meta_missing:
+                        # If we don't have local content/metadata, do NOT send
+                        # conditional headers, so Wikipedia returns a full 200
+                        # instead of 304 Not Modified.
+                        if prev_etag or prev_lm:
+                            print(
+                                f"[heal] missing local files for id={page_id} "
+                                f"(raw_missing={raw_missing}, meta_missing={meta_missing}); "
+                                f"forcing full refetch",
+                                flush=True,
+                            )
+                        prev_etag = None
+                        prev_lm   = None
+                    
 
                     host = urllib.parse.urlsplit(url).netloc
                     limiter.wait(host)
@@ -428,15 +490,36 @@ def crawl():
     for t in threads: t.start()
     frontier.join()
     for t in threads: t.join(timeout=1.0)
-    print(f"[done] fetched={fetched} raw_dir={RAW_DIR}", flush=True)
+    # log both visited URLs and newly fetched ones
+    print(
+        f"[done] visited={visited} fetched_new={fetched} raw_dir={RAW_DIR}",
+        flush=True,
+    )
+    
 
-# keep-alive
-def _graceful(signum, frame):
-    print("Crawler shutting down...", flush=True); sys.exit(0)
-signal.signal(signal.SIGINT, _graceful)
-signal.signal(signal.SIGTERM, _graceful)
+# graceful shutdown handler for Ctrl+C / docker stop
+def _graceful(signum, frame):  
+    print("Crawler shutting down...", flush=True)  
+    sys.exit(0)  
+
+# register signal handlers
+signal.signal(signal.SIGINT, _graceful)   
+signal.signal(signal.SIGTERM, _graceful)  
+
+# to make automation + services play nicely together
+RUN_ONCE = os.getenv("RUN_ONCE") == "1"   # (existing line is fine)
 
 if __name__ == "__main__":
     print("Crawler service running...", flush=True)
-    crawl()
-    while True: time.sleep(60)
+    try:  # catch any KeyboardInterrupt that might slip through
+        if RUN_ONCE:
+            # one-shot behavior
+            crawl()              # (existing)
+        else:
+            # current long-running behavior
+            crawl()              # (existing)
+            while True:
+                time.sleep(60)   # (existing)
+    except KeyboardInterrupt: 
+        print("Crawler interrupted; shutting down...", flush=True) 
+    sys.exit(0)  

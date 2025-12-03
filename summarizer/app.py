@@ -2,6 +2,7 @@
 import os, json, time, signal, sys, re
 from pathlib import Path
 from typing import Optional, Dict, Tuple
+from datetime import datetime, timezone  # for last_summarized_at timestamps
 from openai import OpenAI
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
@@ -35,7 +36,6 @@ def strip_wikilinks_markup(text: Optional[str]) -> Optional[str]:
     return re.sub(r"\[\[([^\]]+)\]\]", _repl, text)
 
 
-
 def strip_chinese_notes(text: Optional[str]) -> Optional[str]:
     """
     Remove note lines like '注：...' from Chinese summaries.
@@ -53,6 +53,96 @@ def strip_chinese_notes(text: Optional[str]) -> Optional[str]:
 
     cleaned = "\n".join(keep_lines).strip()
     return cleaned or None
+
+
+# aggressively clean [[...]] markup from LLM output
+def cleanup_inline_links(text: Optional[str], lang: str) -> Optional[str]:
+    """
+    Normalize or strip TiddlyWiki-style [[links]] in model output.
+
+    - Handle [[title|label]] and [[title]].
+    - For Chinese summaries, prefer the Chinese part (left side)
+      and then aggressively remove any leftover [[ or ]].
+
+    This is intentionally "brute force" so no raw [[...]] shows up
+    in rendered tiddlers.
+    """
+    if not text:
+        return text
+
+    # 1) [[title|label]]
+    def _repl_pipe(m: re.Match) -> str:
+        left, right = m.group(1), m.group(2)
+        # For Chinese, keep left (usually Chinese title)
+        if lang in ("zh", "zh_hans", "zh-hans", "zh_hant", "zh-hant"):
+            return left
+        # For English, keep right if present
+        return right or left
+
+    text = re.sub(r"\[\[([^|\]]+)\|([^\]]*)\]\]", _repl_pipe, text)
+
+    # 2) [[title]]
+    text = re.sub(r"\[\[([^\]]+)\]\]", r"\1", text)
+
+    # 3) For Chinese, nuke any stray [[ or ]] that somehow survived
+    if lang in ("zh", "zh_hans", "zh-hans", "zh_hant", "zh-hant"):
+        text = text.replace("[[", "").replace("]]", "")
+
+    return text
+
+
+
+# small relevance classifier for Nanjing-related content
+def classify_relevance_with_llm(sample_text: str) -> bool:
+    """
+    Ask the local LLM whether this article is relevant to Nanjing.
+    Returns True if LLM replies 'RELEVANT', False if 'IRRELEVANT',
+    and defaults to True on errors/ambiguous output.
+    """
+    if not sample_text:
+        return True  # don't over-filter on completely empty input
+
+    sys_prompt = (
+        "You are a filter deciding if an article is about Nanjing, China or "
+        "closely related topics (its history, culture, landmarks, people, "
+        "institutions, or events).\n"
+        "Reply with exactly one word: RELEVANT or IRRELEVANT."
+    )
+    resp = chat_once(sys_prompt, sample_text[:1500])
+    if not resp:
+        return True
+    answer = resp.strip().upper()
+    if "IRRELEVANT" in answer and "RELEVANT" not in answer.replace("IRRELEVANT", ""):
+        return False
+    if "RELEVANT" in answer:
+        return True
+    return True  # default to keeping rather than throwing away
+
+
+def is_relevant_article(
+    url: str,
+    title: str,
+    categories: list[str],
+    en_source: str,
+    zh_hans_text: str,
+    zh_hant_text: str,
+) -> bool:
+    """
+    Combined heuristic + LLM relevance gate for Nanjing topics.
+    """
+    low_title = (title or "").lower()
+    low_url = (url or "").lower()
+    cat_text = " ".join(categories or []).lower()
+
+    # Quick heuristics: if we clearly see Nanjing / 南京, keep it.
+    if "nanjing" in low_title or "nanjing" in low_url or "nanjing" in cat_text:
+        return True
+    if "南京" in title or "南京" in (en_source or "") or "南京" in (zh_hans_text or "") or "南京" in (zh_hant_text or ""):
+        return True
+
+    # If nothing obviously Nanjing-related, call the LLM on a short sample
+    sample = en_source or zh_hans_text or zh_hant_text
+    return classify_relevance_with_llm(sample or "")
 
 
 def _graceful_exit(signum, frame):
@@ -148,11 +238,13 @@ def process_once() -> int:
 
     for json_path in sorted(CLEAN_DIR.rglob("*.json")):
         out_path = SUMMARY_DIR / json_path.name
-        if out_path.exists():
-            continue
+        #if out_path.exists():
+        #    continue
 
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
+       
+
             url = data.get("url") or ""
             doc_type = (data.get("doc_type") or "").lower()
             lang = (data.get("lang") or "").lower()
@@ -201,6 +293,27 @@ def process_once() -> int:
             # Always keep a generic 'summary' tag too
             derived_tags.add("summary")
             data["tags"] = sorted(derived_tags)
+
+            # incremental summarization using content_hash
+            clean_hash = (data.get("content_hash") or "").strip()
+            existing = None
+            if out_path.exists():
+                try:
+                    existing = json.loads(out_path.read_text(encoding="utf-8"))
+                except Exception:
+                    existing = None
+
+            if existing:
+                old_hash = (existing.get("content_hash") or "").strip()
+                if clean_hash and old_hash and clean_hash == old_hash:
+                    # content unchanged → keep old summaries, skip work
+                    print(
+                        f"[summarizer] unchanged content_hash for {url}, "
+                        f"skipping re-summarize",
+                        flush=True,
+                    )
+                    continue
+        
 
             if (
                 not url
@@ -252,6 +365,20 @@ def process_once() -> int:
             ):
                 print(f"[summarizer] too-short content {url}", flush=True)
                 continue
+
+            # relevance gate (heuristics + LLM) before we spend tokens summarizing
+            title = (data.get("title") or "").strip()
+            if not is_relevant_article(
+                url=url,
+                title=title,
+                categories=categories,
+                en_source=en_source,
+                zh_hans_text=zh_hans_text,
+                zh_hant_text=zh_hant_text,
+            ):
+                print(f"[summarizer] filtered as IRRELEVANT: {url}", flush=True)
+                continue
+         
 
             print(
                 f"[summarizer] Summarizing {json_path.relative_to(DATA_DIR)} "
@@ -338,6 +465,12 @@ def process_once() -> int:
                             en_summary, use_trad=True, main_title=zh_title_hans
                         )
 
+            # strip any [[...]] from LLM outputs
+            en_summary   = cleanup_inline_links(en_summary,   "en")
+            hans_summary = cleanup_inline_links(hans_summary, "zh_hans")
+            hant_summary = cleanup_inline_links(hant_summary, "zh_hant")
+           
+
             # Cleanup Chinese note lines
             hans_summary = strip_chinese_notes(hans_summary)
             hant_summary = strip_chinese_notes(hant_summary)
@@ -350,9 +483,22 @@ def process_once() -> int:
                     if en_summary:
                         en_summary = en_summary.strip()
 
+            # as a last step, strip any leftover [[...]] markup
+            # from summaries themselves, in case the LLM ever emits it.
+            en_summary   = strip_wikilinks_markup(en_summary)
+            hans_summary = strip_wikilinks_markup(hans_summary)
+            hant_summary = strip_wikilinks_markup(hant_summary)
+           
+
             data["summary_en"] = en_summary
             data["summary_zh_hans"] = hans_summary
             data["summary_zh_hant"] = hant_summary
+
+            # persist content_hash + last_summarized_at into summary JSON
+            if clean_hash:
+                data["content_hash"] = clean_hash
+            data["last_summarized_at"] = datetime.now(timezone.utc).isoformat()
+          
 
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(
@@ -367,6 +513,8 @@ def process_once() -> int:
 
     return wrote
 
+# to make automation + services play nicely together
+RUN_ONCE = os.getenv("RUN_ONCE") == "1"   # (existing)
 
 if __name__ == "__main__":
     print(f"Summarizer service running... (model={MODEL_NAME})", flush=True)
@@ -378,7 +526,14 @@ if __name__ == "__main__":
         print(f"[WARN] Could not verify LLM: {e}", flush=True)
 
     SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
-    while True:
-        n = process_once()
-        if n == 0:
-            time.sleep(INTERVAL)
+    try:  # catch KeyboardInterrupt
+        if RUN_ONCE:
+            process_once()  # (existing)
+        else:
+            while True:
+                n = process_once()  # (existing)
+                if n == 0:
+                    time.sleep(INTERVAL)  # (existing)
+    except KeyboardInterrupt:
+        print("Summarizer interrupted; shutting down...", flush=True)  
+    sys.exit(0)  

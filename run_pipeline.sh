@@ -53,41 +53,72 @@
 set -e
 
 # === CONFIG ===
-PROJECT_DIR="/Users/<username>/wikiagent"  # <-- UPDATE THIS PATH FOR ANJSO'S MAC SYSTEM (Or your system if you're running it locally on a Mac environment to test).
+# use the directory where run_pipeline.sh lives as the project root, as long as the script is inside the repo
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)" # <-- UPDATE THIS PATH FOR ANJSO'S MAC SYSTEM (Or your system if you're running it locally on a Mac environment to test).
 LOG_DIR="$PROJECT_DIR/logs"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 mkdir -p "$LOG_DIR"
 
+# PATH fix for cron environments where docker isn't on PATH
+export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
+
 echo "--- Run started at $TIMESTAMP ---" >> "$LOG_DIR/automation.log"
 
 cd "$PROJECT_DIR"
+
+# helper to run a step, log exit code, and stop if it fails
+run_step() {
+  local LABEL="$1"; shift
+  echo "[$LABEL] starting..." >> "$LOG_DIR/automation.log"
+  "$@" >> "$LOG_DIR/automation.log" 2>&1
+  local RC=$?
+  echo "[$LABEL] exit code=$RC" >> "$LOG_DIR/automation.log"
+  if [ $RC -ne 0 ]; then
+    echo "[ERROR] $LABEL failed (exit $RC), aborting pipeline." >> "$LOG_DIR/automation.log"
+    echo "--- Run aborted at $(date '+%Y-%m-%d %H:%M:%S') ---" >> "$LOG_DIR/automation.log"
+    echo "" >> "$LOG_DIR/automation.log"
+    exit $RC
+  fi
+}
 
 # 1. Pull latest main
 echo "[1] Updating repo…" >> "$LOG_DIR/automation.log"
 git fetch --all >> "$LOG_DIR/automation.log" 2>&1
 git reset --hard origin/main >> "$LOG_DIR/automation.log" 2>&1
 
-# 2. Rebuild and restart docker
+# 2. Rebuild and restart docker, build images but do NOT leave long-running services behind
 echo "[2] Rebuilding Docker…" >> "$LOG_DIR/automation.log"
 docker compose down >> "$LOG_DIR/automation.log" 2>&1
 docker compose pull >> "$LOG_DIR/automation.log" 2>&1
-docker compose up --build -d >> "$LOG_DIR/automation.log" 2>&1
+docker compose build >> "$LOG_DIR/automation.log" 2>&1
+
+# IMPORTANT:
+# - We do NOT use `docker compose down -v`, so the ./data:/data volume
+#   stays intact (wiki.sqlite + raw/clean/summarized JSON + content_hash).
+
+# start only the long-lived dependencies we need (brain + db)
+echo "[3] Starting brain + db in background…" >> "$LOG_DIR/automation.log"
+docker compose up -d db brain >> "$LOG_DIR/automation.log" 2>&1
 
 sleep 5  # give services time to stabilize
 
-# 3. Run each service
+# 3. Run each service, RUN_ONCE=1 makes each step run once and then exit cleanly
 echo "[3] Running crawler…" >> "$LOG_DIR/automation.log"
-docker compose exec crawler python app.py >> "$LOG_DIR/automation.log" 2>&1
+docker compose run --rm -e RUN_ONCE=1 crawler python app.py >> "$LOG_DIR/automation.log" 2>&1
 
 echo "[4] Running extractor…" >> "$LOG_DIR/automation.log"
-docker compose exec extractor python app.py >> "$LOG_DIR/automation.log" 2>&1
+docker compose run --rm -e RUN_ONCE=1 extractor python app.py >> "$LOG_DIR/automation.log" 2>&1
 
 echo "[5] Running summarizer…" >> "$LOG_DIR/automation.log"
-docker compose exec summarizer python app.py >> "$LOG_DIR/automation.log" 2>&1
+docker compose run --rm -e RUN_ONCE=1 summarizer python app.py >> "$LOG_DIR/automation.log" 2>&1
 
 echo "[6] Running publisher…" >> "$LOG_DIR/automation.log"
-docker compose exec publisher python app.py >> "$LOG_DIR/automation.log" 2>&1
+docker compose run --rm publisher python app.py >> "$LOG_DIR/automation.log" 2>&1
+
+# cleanup of background services (brain + db) after run
+echo "[8] Stopping background services…" >> "$LOG_DIR/automation.log"
+docker compose stop brain db >> "$LOG_DIR/automation.log" 2>&1
 
 echo "--- Run completed at $(date '+%Y-%m-%d %H:%M:%S') ---" >> "$LOG_DIR/automation.log"
 echo "" >> "$LOG_DIR/automation.log"
