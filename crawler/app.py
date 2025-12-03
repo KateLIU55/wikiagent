@@ -287,7 +287,7 @@ def crawl():
             print(f"[seed-skip] {s}", flush=True)
     print(f"[seed] enqueued={seed_enq}", flush=True)
 
-    # 2) NEW: enqueue all known pages from DB for periodic re-check
+    # 2) enqueue all known pages from DB for periodic re-check
     #    This lets us revalidate up to ~900 pages that we've already crawled.
     db_enq = 0
     try:
@@ -316,7 +316,7 @@ def crawl():
 
     print(f"[db] recheck_enqueued={db_enq}", flush=True)
 
-    # 3) rest is unchanged
+    # 3) rest is same as before
     limiter = RateLimiter(rps_per_host=rps)
     fetched = 0
     visited = 0  # count URLs we actually processed
@@ -350,10 +350,10 @@ def crawl():
                         continue
                     seen.add(url)
 
-                    # CHANGE: increment visited count for this URL
+                    # ncrement visited count for this URL
                     with fetch_lock:
                         visited += 1
-                    # END CHANGE
+                    
 
 
                     if honor_robots and not robots_ok(url):
@@ -366,7 +366,7 @@ def crawl():
                         pid_etag_lm if isinstance(pid_etag_lm, tuple) else (pid_etag_lm, None, None)
                     )
 
-                    # CHANGE: auto-healing for missing raw/meta files
+                    # auto-healing for missing raw/meta files
                     raw_path  = os.path.join(RAW_DIR, f"{page_id}.html")
                     meta_path = os.path.join(RAW_DIR, f"{page_id}.meta.json")
                     raw_missing  = not os.path.exists(raw_path)
@@ -385,7 +385,7 @@ def crawl():
                             )
                         prev_etag = None
                         prev_lm   = None
-                    # END CHANGE
+                    
 
                     host = urllib.parse.urlsplit(url).netloc
                     limiter.wait(host)
@@ -490,28 +490,28 @@ def crawl():
     for t in threads: t.start()
     frontier.join()
     for t in threads: t.join(timeout=1.0)
-    # CHANGE: log both visited URLs and newly fetched ones
+    # log both visited URLs and newly fetched ones
     print(
         f"[done] visited={visited} fetched_new={fetched} raw_dir={RAW_DIR}",
         flush=True,
     )
-    # END CHANGE
+    
 
-# NEW: graceful shutdown handler for Ctrl+C / docker stop
-def _graceful(signum, frame):  # NEW
-    print("Crawler shutting down...", flush=True)  # NEW
-    sys.exit(0)  # NEW
+# graceful shutdown handler for Ctrl+C / docker stop
+def _graceful(signum, frame):  
+    print("Crawler shutting down...", flush=True)  
+    sys.exit(0)  
 
-# NEW: register signal handlers
-signal.signal(signal.SIGINT, _graceful)   # NEW
-signal.signal(signal.SIGTERM, _graceful)  # NEW
+# register signal handlers
+signal.signal(signal.SIGINT, _graceful)   
+signal.signal(signal.SIGTERM, _graceful)  
 
 # to make automation + services play nicely together
 RUN_ONCE = os.getenv("RUN_ONCE") == "1"   # (existing line is fine)
 
 if __name__ == "__main__":
     print("Crawler service running...", flush=True)
-    try:  # NEW: catch any KeyboardInterrupt that might slip through
+    try:  # catch any KeyboardInterrupt that might slip through
         if RUN_ONCE:
             # one-shot behavior
             crawl()              # (existing)
@@ -520,6 +520,6 @@ if __name__ == "__main__":
             crawl()              # (existing)
             while True:
                 time.sleep(60)   # (existing)
-    except KeyboardInterrupt:  # NEW
-        print("Crawler interrupted; shutting down...", flush=True)  # NEW
-    sys.exit(0)  # NEW
+    except KeyboardInterrupt: 
+        print("Crawler interrupted; shutting down...", flush=True) 
+    sys.exit(0)  

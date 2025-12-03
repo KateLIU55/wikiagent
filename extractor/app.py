@@ -269,9 +269,6 @@ def process_once() -> int:
                 continue
 
 
-
-
-
         try:
             with open(html_path, "rb") as f:
                 raw = f.read()
@@ -316,7 +313,7 @@ def process_once() -> int:
             print(f"[extractor] skip {doc_type} page_id={page_id} url={url} chars={len(text or '')}", flush=True)
             continue
 
-        # NEW: pull Chinese variants (if they exist)
+        # pull Chinese variants (if they exist)
         # Basic language flag from domain
         lang = "zh" if ("zh.wikipedia.org" in (url or "")) else "en"
 
@@ -363,14 +360,14 @@ def process_once() -> int:
         wrote += 1
     return wrote
 
-# NEW: graceful shutdown handler for extractor
-def _graceful(signum, frame):  # NEW
-    print("Extractor shutting down...", flush=True)  # NEW
-    sys.exit(0)  # NEW
+# graceful shutdown handler for extractor
+def _graceful(signum, frame):  
+    print("Extractor shutting down...", flush=True)  
+    sys.exit(0)  
 
-# NEW: register signal handlers for Ctrl+C and docker stop
-signal.signal(signal.SIGINT, _graceful)   # NEW
-signal.signal(signal.SIGTERM, _graceful)  # NEW
+# register signal handlers for Ctrl+C and docker stop
+signal.signal(signal.SIGINT, _graceful)   
+signal.signal(signal.SIGTERM, _graceful)  
 
 
 # to make automation + services play nicely together
@@ -379,7 +376,7 @@ RUN_ONCE = os.getenv("RUN_ONCE") == "1"   # (existing)
 if __name__ == "__main__":
     ensure_out_dir()
     print("Extractor service running...", flush=True)
-    try:  # NEW: catch KeyboardInterrupt for clean exit
+    try:  # catch KeyboardInterrupt for clean exit
         if RUN_ONCE:
             process_once()  # (existing)
         else:
@@ -387,6 +384,6 @@ if __name__ == "__main__":
                 n = process_once()  # (existing)
                 if n == 0:
                     time.sleep(INTERVAL)  # (existing)
-    except KeyboardInterrupt:  # NEW
-        print("Extractor interrupted; shutting down...", flush=True)  # NEW
-    sys.exit(0)  # NEW
+    except KeyboardInterrupt:  
+        print("Extractor interrupted; shutting down...", flush=True)  
+    sys.exit(0)  

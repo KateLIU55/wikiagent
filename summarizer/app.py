@@ -2,7 +2,7 @@
 import os, json, time, signal, sys, re
 from pathlib import Path
 from typing import Optional, Dict, Tuple
-from datetime import datetime, timezone  # CHANGE: for last_summarized_at timestamps
+from datetime import datetime, timezone  # for last_summarized_at timestamps
 from openai import OpenAI
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
@@ -55,7 +55,7 @@ def strip_chinese_notes(text: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
-# CHANGE: aggressively clean [[...]] markup from LLM output
+# aggressively clean [[...]] markup from LLM output
 def cleanup_inline_links(text: Optional[str], lang: str) -> Optional[str]:
     """
     Normalize or strip TiddlyWiki-style [[links]] in model output.
@@ -89,10 +89,10 @@ def cleanup_inline_links(text: Optional[str], lang: str) -> Optional[str]:
         text = text.replace("[[", "").replace("]]", "")
 
     return text
-# END CHANGE
 
 
-# CHANGE: small relevance classifier for Nanjing-related content
+
+# small relevance classifier for Nanjing-related content
 def classify_relevance_with_llm(sample_text: str) -> bool:
     """
     Ask the local LLM whether this article is relevant to Nanjing.
@@ -143,7 +143,7 @@ def is_relevant_article(
     # If nothing obviously Nanjing-related, call the LLM on a short sample
     sample = en_source or zh_hans_text or zh_hant_text
     return classify_relevance_with_llm(sample or "")
-# END CHANGE: relevance classifier
+
 
 def _graceful_exit(signum, frame):
     print("Summarizer shutting down...", flush=True)
@@ -294,7 +294,7 @@ def process_once() -> int:
             derived_tags.add("summary")
             data["tags"] = sorted(derived_tags)
 
-            # CHANGE: incremental summarization using content_hash
+            # incremental summarization using content_hash
             clean_hash = (data.get("content_hash") or "").strip()
             existing = None
             if out_path.exists():
@@ -313,7 +313,7 @@ def process_once() -> int:
                         flush=True,
                     )
                     continue
-            # END CHANGE: incremental summarization
+        
 
             if (
                 not url
@@ -366,7 +366,7 @@ def process_once() -> int:
                 print(f"[summarizer] too-short content {url}", flush=True)
                 continue
 
-            # CHANGE: relevance gate (heuristics + LLM) before we spend tokens summarizing
+            # relevance gate (heuristics + LLM) before we spend tokens summarizing
             title = (data.get("title") or "").strip()
             if not is_relevant_article(
                 url=url,
@@ -378,7 +378,7 @@ def process_once() -> int:
             ):
                 print(f"[summarizer] filtered as IRRELEVANT: {url}", flush=True)
                 continue
-            # END CHANGE: relevance gate
+         
 
             print(
                 f"[summarizer] Summarizing {json_path.relative_to(DATA_DIR)} "
@@ -465,11 +465,11 @@ def process_once() -> int:
                             en_summary, use_trad=True, main_title=zh_title_hans
                         )
 
-            # CHANGE: strip any [[...]] from LLM outputs
+            # strip any [[...]] from LLM outputs
             en_summary   = cleanup_inline_links(en_summary,   "en")
             hans_summary = cleanup_inline_links(hans_summary, "zh_hans")
             hant_summary = cleanup_inline_links(hant_summary, "zh_hant")
-            # END CHANGE
+           
 
             # Cleanup Chinese note lines
             hans_summary = strip_chinese_notes(hans_summary)
@@ -483,22 +483,22 @@ def process_once() -> int:
                     if en_summary:
                         en_summary = en_summary.strip()
 
-            # CHANGE: as a last step, strip any leftover [[...]] markup
+            # as a last step, strip any leftover [[...]] markup
             # from summaries themselves, in case the LLM ever emits it.
             en_summary   = strip_wikilinks_markup(en_summary)
             hans_summary = strip_wikilinks_markup(hans_summary)
             hant_summary = strip_wikilinks_markup(hant_summary)
-            # END CHANGE
+           
 
             data["summary_en"] = en_summary
             data["summary_zh_hans"] = hans_summary
             data["summary_zh_hant"] = hant_summary
 
-            # CHANGE: persist content_hash + last_summarized_at into summary JSON
+            # persist content_hash + last_summarized_at into summary JSON
             if clean_hash:
                 data["content_hash"] = clean_hash
             data["last_summarized_at"] = datetime.now(timezone.utc).isoformat()
-            # END CHANGE
+          
 
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(
@@ -526,7 +526,7 @@ if __name__ == "__main__":
         print(f"[WARN] Could not verify LLM: {e}", flush=True)
 
     SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
-    try:  # NEW: catch KeyboardInterrupt
+    try:  # catch KeyboardInterrupt
         if RUN_ONCE:
             process_once()  # (existing)
         else:
@@ -534,6 +534,6 @@ if __name__ == "__main__":
                 n = process_once()  # (existing)
                 if n == 0:
                     time.sleep(INTERVAL)  # (existing)
-    except KeyboardInterrupt:  # NEW
-        print("Summarizer interrupted; shutting down...", flush=True)  # NEW
-    sys.exit(0)  # NEW
+    except KeyboardInterrupt:
+        print("Summarizer interrupted; shutting down...", flush=True)  
+    sys.exit(0)  
