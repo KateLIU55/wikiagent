@@ -243,13 +243,14 @@ def process_once() -> int:
         out_path = os.path.join(OUT_DIR, f"{stem}.json")
 
         # determine page_id & load meta early so we can see content_hash
-        try:  #compute page_id from filename
+        try:  # compute page_id from filename
             page_id = int(stem)
         except ValueError:
             page_id = None
 
-        # meta = load_meta(page_id) if page_id is not None else None 
-        # current_hash = meta.get("content_hash") if meta else None 
+        # Load meta once here and derive current_hash
+        meta = load_meta(page_id) if page_id is not None else None
+        current_hash = meta.get("content_hash") if meta else None
 
         # incremental extraction – skip if content_hash unchanged
         if os.path.exists(out_path):
@@ -266,6 +267,7 @@ def process_once() -> int:
                     flush=True,
                 )
                 continue
+
 
 
 
@@ -287,15 +289,13 @@ def process_once() -> int:
         text = extract_text_from_soup(soup)
 
         # id & metadata
-        # meta already loaded earlier; reuse it instead of re-calling load_meta()
+        # meta already loaded earlier; reuse it here
         url, retrieved_at = None, None
-        content_hash = None  # CHANGE: track content_hash from meta
+        content_hash = current_hash  # track content_hash from meta
 
-        meta = load_meta(page_id) if page_id is not None else None
         if meta:
             url = meta.get("url")
             retrieved_at = meta.get("fetched_at")
-            current_hash = meta.get("content_hash")
         else:
             try:
                 if page_id is not None:
@@ -327,9 +327,9 @@ def process_once() -> int:
             zh_url, zh_title_hans, content_zh_hans, content_zh_hant = chinese_variants_from_en_html(raw)
         elif "zh.wikipedia.org" in url:
             # We’re already on the Chinese page; treat this content as Simplified Chinese by default
-                content_zh_hans = text
-                zh_url = url
-                zh_title_hans = title
+            content_zh_hans = text
+            zh_url = url
+            zh_title_hans = title
 
 
         # Collect raw Wikipedia categories (for tagging later)
@@ -353,7 +353,7 @@ def process_once() -> int:
             "content_zh_hans": content_zh_hans,
             "content_zh_hant": content_zh_hant,
             "categories": raw_categories,
-            "content_hash": current_hash,
+            "content_hash": content_hash,
         }
 
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
