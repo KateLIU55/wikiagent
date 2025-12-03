@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python3
 import os, json, glob, time, sqlite3, urllib.parse, re
 from bs4 import BeautifulSoup
@@ -240,8 +241,34 @@ def process_once() -> int:
     for html_path in sorted(glob.glob(os.path.join(RAW_DIR, "*.html"))):
         stem = os.path.splitext(os.path.basename(html_path))[0]
         out_path = os.path.join(OUT_DIR, f"{stem}.json")
+
+        # determine page_id & load meta early so we can see content_hash
+        try:  #compute page_id from filename
+            page_id = int(stem)
+        except ValueError:
+            page_id = None
+
+        # meta = load_meta(page_id) if page_id is not None else None 
+        # current_hash = meta.get("content_hash") if meta else None 
+
+        # incremental extraction – skip if content_hash unchanged
         if os.path.exists(out_path):
-            continue
+            try:
+                existing = json.loads(open(out_path, "r", encoding="utf-8").read())
+                existing_hash = existing.get("content_hash")
+            except Exception:
+                existing_hash = None
+
+            if current_hash and existing_hash and existing_hash == current_hash:
+                print(
+                    f"[extractor] unchanged content_hash for page_id={page_id} "
+                    f"({stem}); skipping re-extract",
+                    flush=True,
+                )
+                continue
+
+
+
 
         try:
             with open(html_path, "rb") as f:
@@ -260,16 +287,15 @@ def process_once() -> int:
         text = extract_text_from_soup(soup)
 
         # id & metadata
-        try:
-            page_id = int(stem)
-        except ValueError:
-            page_id = None
-
+        # meta already loaded earlier; reuse it instead of re-calling load_meta()
         url, retrieved_at = None, None
+        content_hash = None  # CHANGE: track content_hash from meta
+
         meta = load_meta(page_id) if page_id is not None else None
         if meta:
             url = meta.get("url")
             retrieved_at = meta.get("fetched_at")
+            current_hash = meta.get("content_hash")
         else:
             try:
                 if page_id is not None:
@@ -327,6 +353,7 @@ def process_once() -> int:
             "content_zh_hans": content_zh_hans,
             "content_zh_hant": content_zh_hant,
             "categories": raw_categories,
+            "content_hash": current_hash,
         }
 
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
@@ -336,11 +363,17 @@ def process_once() -> int:
         wrote += 1
     return wrote
 
+# to make automation + services play nicely together
+RUN_ONCE = os.getenv("RUN_ONCE") == "1"
 
 if __name__ == "__main__":
     ensure_out_dir()
     print("Extractor service running...", flush=True)
-    while True:
-        n = process_once()
-        if n == 0:
-            time.sleep(INTERVAL)
+    if RUN_ONCE:
+        process_once()
+        sys.exit(0)
+    else:
+        while True:
+            n = process_once()
+            if n == 0:
+                time.sleep(INTERVAL)
