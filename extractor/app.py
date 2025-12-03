@@ -1,6 +1,6 @@
 
 #!/usr/bin/env python3
-import os, json, glob, time, sqlite3, urllib.parse, re
+import os, json, glob, time, sqlite3, urllib.parse, re, sys
 from bs4 import BeautifulSoup
 from sqlite3 import DatabaseError
 from urllib.request import Request, urlopen
