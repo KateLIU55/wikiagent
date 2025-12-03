@@ -60,14 +60,14 @@ TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
 
 mkdir -p "$LOG_DIR"
 
-# CHANGE: optional PATH fix for cron environments where docker isn't on PATH
+# PATH fix for cron environments where docker isn't on PATH
 export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
 
 echo "--- Run started at $TIMESTAMP ---" >> "$LOG_DIR/automation.log"
 
 cd "$PROJECT_DIR"
 
-# CHANGE: helper to run a step, log exit code, and stop if it fails
+# helper to run a step, log exit code, and stop if it fails
 run_step() {
   local LABEL="$1"; shift
   echo "[$LABEL] starting..." >> "$LOG_DIR/automation.log"
@@ -97,7 +97,7 @@ docker compose build >> "$LOG_DIR/automation.log" 2>&1
 # - We do NOT use `docker compose down -v`, so the ./data:/data volume
 #   stays intact (wiki.sqlite + raw/clean/summarized JSON + content_hash).
 
-# CHANGE: start only the long-lived dependencies we need (brain + db)
+# start only the long-lived dependencies we need (brain + db)
 echo "[3] Starting brain + db in background…" >> "$LOG_DIR/automation.log"
 docker compose up -d db brain >> "$LOG_DIR/automation.log" 2>&1
 
@@ -116,7 +116,7 @@ docker compose run --rm -e RUN_ONCE=1 summarizer python app.py >> "$LOG_DIR/auto
 echo "[6] Running publisher…" >> "$LOG_DIR/automation.log"
 docker compose run --rm publisher python app.py >> "$LOG_DIR/automation.log" 2>&1
 
-# CHANGE: optional cleanup of background services (brain + db) after run
+# cleanup of background services (brain + db) after run
 echo "[8] Stopping background services…" >> "$LOG_DIR/automation.log"
 docker compose stop brain db >> "$LOG_DIR/automation.log" 2>&1
 
