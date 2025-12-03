@@ -40,12 +40,12 @@ services:
       - ./data:/data
     environment:
       # --- Tian’s remote endpoint ---
-      LLM_BASE_URL: http://anjso.ddns.net:13001/api/v1/openai
-      LLM_API_KEY: ${LLM_API_KEY}     # ANJSO Key
-      LLM_MODEL: anjso
-      #LLM_BASE_URL: http://brain:8000/v1
-      #LLM_API_KEY: local
-      #LLM_MODEL: llama-3.1-8b-instruct
+      # LLM_BASE_URL: http://anjso.ddns.net:13001/api/v1/openai
+      # LLM_API_KEY: ${LLM_API_KEY}     # ANJSO Key
+      # LLM_MODEL: anjso
+      LLM_BASE_URL: http://brain:8000/v1
+      LLM_API_KEY: local
+      LLM_MODEL: llama-3.1-8b-instruct
       DATA_DIR: /data
       IDLE_INTERVAL: 60
     command: python app.py
@@ -88,12 +88,12 @@ services:
     container_name: brain
     environment:
       DB_PATH: /data/wiki.sqlite
-      LLM_API_BASE: http://anjso.ddns.net:13001/api/v1/openai
-      LLM_API_KEY: ${LLM_API_KEY}
-      MODEL: anjso
-    #  LLM_BASE_URL: http://brain:8000/v1   # talk to brain’s OpenAI-style proxy
-    #  LLM_API_KEY: local
-    #  LLM_MODEL: meta-llama-3.1-8b-instruct
+      # LLM_API_BASE: http://anjso.ddns.net:13001/api/v1/openai
+      # LLM_API_KEY: ${LLM_API_KEY}
+      # MODEL: anjso
+      LLM_BASE_URL: http://brain:8000/v1   # talk to brain’s OpenAI-style proxy
+      LLM_API_KEY: local
+      LLM_MODEL: llama-3.1-8b-instruct
     volumes:
       - ./data:/data
     depends_on:

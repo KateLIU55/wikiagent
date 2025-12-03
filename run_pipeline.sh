@@ -53,6 +53,7 @@
 set -e
 
 # === CONFIG ===
+# use the directory where run_pipeline.sh lives as the project root, as long as the script is inside the repo
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)" # <-- UPDATE THIS PATH FOR ANJSO'S MAC SYSTEM (Or your system if you're running it locally on a Mac environment to test).
 LOG_DIR="$PROJECT_DIR/logs"
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')

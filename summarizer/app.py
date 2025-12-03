@@ -1,9 +1,3 @@
-
-
-
-
-
-
 #!/usr/bin/env python3
 import os, json, time, signal, sys, re
 from pathlib import Path
@@ -520,7 +514,7 @@ def process_once() -> int:
     return wrote
 
 # to make automation + services play nicely together
-RUN_ONCE = os.getenv("RUN_ONCE") == "1"
+RUN_ONCE = os.getenv("RUN_ONCE") == "1"   # (existing)
 
 if __name__ == "__main__":
     print(f"Summarizer service running... (model={MODEL_NAME})", flush=True)
@@ -532,11 +526,14 @@ if __name__ == "__main__":
         print(f"[WARN] Could not verify LLM: {e}", flush=True)
 
     SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
-    if RUN_ONCE:
-        process_once()
-        sys.exit(0)
-    else:
-        while True:
-            n = process_once()
-            if n == 0:
-                time.sleep(INTERVAL)
+    try:  # NEW: catch KeyboardInterrupt
+        if RUN_ONCE:
+            process_once()  # (existing)
+        else:
+            while True:
+                n = process_once()  # (existing)
+                if n == 0:
+                    time.sleep(INTERVAL)  # (existing)
+    except KeyboardInterrupt:  # NEW
+        print("Summarizer interrupted; shutting down...", flush=True)  # NEW
+    sys.exit(0)  # NEW

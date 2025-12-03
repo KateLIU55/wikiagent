@@ -497,23 +497,29 @@ def crawl():
     )
     # END CHANGE
 
-# keep-alive
-def _graceful(signum, frame):
-    print("Crawler shutting down...", flush=True); sys.exit(0)
-signal.signal(signal.SIGINT, _graceful)
-signal.signal(signal.SIGTERM, _graceful)
+# NEW: graceful shutdown handler for Ctrl+C / docker stop
+def _graceful(signum, frame):  # NEW
+    print("Crawler shutting down...", flush=True)  # NEW
+    sys.exit(0)  # NEW
+
+# NEW: register signal handlers
+signal.signal(signal.SIGINT, _graceful)   # NEW
+signal.signal(signal.SIGTERM, _graceful)  # NEW
 
 # to make automation + services play nicely together
-RUN_ONCE = os.getenv("RUN_ONCE") == "1"
+RUN_ONCE = os.getenv("RUN_ONCE") == "1"   # (existing line is fine)
 
 if __name__ == "__main__":
     print("Crawler service running...", flush=True)
-    if RUN_ONCE:
-        # one-shot behavior
-        crawl()              
-        sys.exit(0)
-    else:
-        # current long-running behavior
-        crawl()
-        while True:
-            time.sleep(60)
+    try:  # NEW: catch any KeyboardInterrupt that might slip through
+        if RUN_ONCE:
+            # one-shot behavior
+            crawl()              # (existing)
+        else:
+            # current long-running behavior
+            crawl()              # (existing)
+            while True:
+                time.sleep(60)   # (existing)
+    except KeyboardInterrupt:  # NEW
+        print("Crawler interrupted; shutting down...", flush=True)  # NEW
+    sys.exit(0)  # NEW

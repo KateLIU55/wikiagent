@@ -1,6 +1,6 @@
 
 #!/usr/bin/env python3
-import os, json, glob, time, sqlite3, urllib.parse, re, sys
+import os, json, glob, time, sqlite3, urllib.parse, re, sys, signal
 from bs4 import BeautifulSoup
 from sqlite3 import DatabaseError
 from urllib.request import Request, urlopen
@@ -363,17 +363,30 @@ def process_once() -> int:
         wrote += 1
     return wrote
 
+# NEW: graceful shutdown handler for extractor
+def _graceful(signum, frame):  # NEW
+    print("Extractor shutting down...", flush=True)  # NEW
+    sys.exit(0)  # NEW
+
+# NEW: register signal handlers for Ctrl+C and docker stop
+signal.signal(signal.SIGINT, _graceful)   # NEW
+signal.signal(signal.SIGTERM, _graceful)  # NEW
+
+
 # to make automation + services play nicely together
-RUN_ONCE = os.getenv("RUN_ONCE") == "1"
+RUN_ONCE = os.getenv("RUN_ONCE") == "1"   # (existing)
 
 if __name__ == "__main__":
     ensure_out_dir()
     print("Extractor service running...", flush=True)
-    if RUN_ONCE:
-        process_once()
-        sys.exit(0)
-    else:
-        while True:
-            n = process_once()
-            if n == 0:
-                time.sleep(INTERVAL)
+    try:  # NEW: catch KeyboardInterrupt for clean exit
+        if RUN_ONCE:
+            process_once()  # (existing)
+        else:
+            while True:
+                n = process_once()  # (existing)
+                if n == 0:
+                    time.sleep(INTERVAL)  # (existing)
+    except KeyboardInterrupt:  # NEW
+        print("Extractor interrupted; shutting down...", flush=True)  # NEW
+    sys.exit(0)  # NEW
