@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 import os, json, glob, time, sqlite3, urllib.parse, re, sys, signal
 from bs4 import BeautifulSoup
@@ -30,6 +29,15 @@ EXTRACTOR_MIN_CHARS       = int(os.getenv("EXTRACTOR_MIN_CHARS", "180"))
 
 UA = "ANJSO-Extractor/1.0 (+https://anjso.org/wiki)"
 HTTP_TIMEOUT = 20
+
+# ===== CHANGE E: topic_id normalizer (shared English/Hans key per topic) =====
+def normalize_id(s: str) -> str:
+    """Normalize English or Hans title into a stable identifier."""
+    s = (s or "").strip().lower()
+    s = re.sub(r"\s+", "_", s)
+    s = re.sub(r"[^\w\-]+", "", s)
+    return s
+
 
 def load_meta(page_id: int):
     p = os.path.join(RAW_DIR, f"{page_id}.meta.json")
@@ -238,36 +246,19 @@ def chinese_variants_from_en_html(en_html: bytes) -> tuple[str | None, str | Non
 
 def process_once() -> int:
     wrote = 0
+    ensure_out_dir()  # safe no-op if it already exists
+
     for html_path in sorted(glob.glob(os.path.join(RAW_DIR, "*.html"))):
         stem = os.path.splitext(os.path.basename(html_path))[0]
-        out_path = os.path.join(OUT_DIR, f"{stem}.json")
 
         # determine page_id & load meta early so we can see content_hash
-        try:  # compute page_id from filename
+        try:
             page_id = int(stem)
         except ValueError:
             page_id = None
 
-        # Load meta once here and derive current_hash
         meta = load_meta(page_id) if page_id is not None else None
         current_hash = meta.get("content_hash") if meta else None
-
-        # incremental extraction – skip if content_hash unchanged
-        if os.path.exists(out_path):
-            try:
-                existing = json.loads(open(out_path, "r", encoding="utf-8").read())
-                existing_hash = existing.get("content_hash")
-            except Exception:
-                existing_hash = None
-
-            if current_hash and existing_hash and existing_hash == current_hash:
-                print(
-                    f"[extractor] unchanged content_hash for page_id={page_id} "
-                    f"({stem}); skipping re-extract",
-                    flush=True,
-                )
-                continue
-
 
         try:
             with open(html_path, "rb") as f:
@@ -285,10 +276,9 @@ def process_once() -> int:
 
         text = extract_text_from_soup(soup)
 
-        # id & metadata
-        # meta already loaded earlier; reuse it here
+        # derive url / retrieved_at using meta or DB
         url, retrieved_at = None, None
-        content_hash = current_hash  # track content_hash from meta
+        content_hash = current_hash  # track content_hash from meta (if any)
 
         if meta:
             url = meta.get("url")
@@ -313,21 +303,41 @@ def process_once() -> int:
             print(f"[extractor] skip {doc_type} page_id={page_id} url={url} chars={len(text or '')}", flush=True)
             continue
 
-        # pull Chinese variants (if they exist)
         # Basic language flag from domain
         lang = "zh" if ("zh.wikipedia.org" in (url or "")) else "en"
 
         zh_url = zh_title_hans = content_zh_hans = content_zh_hant = None
 
-        if "en.wikipedia.org" in url:
+        if "en.wikipedia.org" in (url or ""):
             # We’re on the English page; try to locate and fetch Chinese siblings
             zh_url, zh_title_hans, content_zh_hans, content_zh_hant = chinese_variants_from_en_html(raw)
-        elif "zh.wikipedia.org" in url:
+        elif "zh.wikipedia.org" in (url or ""):
             # We’re already on the Chinese page; treat this content as Simplified Chinese by default
             content_zh_hans = text
             zh_url = url
             zh_title_hans = title
 
+        # ===== CHANGE F: compute topic_id using hans title, fallback to main title =====
+        topic_title_for_id = zh_title_hans or title
+        topic_id = normalize_id(topic_title_for_id)
+
+        # ===== CHANGE G: use topic_id.json instead of page_id.json =====
+        out_path = os.path.join(OUT_DIR, f"{topic_id}.json")
+
+        # ===== CHANGE H + I: incremental update + dedupe by content_hash =====
+        if os.path.exists(out_path):
+            try:
+                with open(out_path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                existing_hash = existing.get("content_hash")
+            except Exception:
+                existing_hash = None
+
+            if current_hash and existing_hash == current_hash:
+                print(f"[extractor] skip {topic_id}: unchanged content_hash", flush=True)
+                continue
+            else:
+                print(f"[extractor] updating {topic_id}: content changed or hash missing", flush=True)
 
         # Collect raw Wikipedia categories (for tagging later)
         raw_categories = [
@@ -335,7 +345,9 @@ def process_once() -> int:
             for a in soup.select("#mw-normal-catlinks a")
         ]
 
+        # ===== CHANGE J: include topic_id so summarizer/publisher can group by topic =====
         out = {
+            "topic_id": topic_id,
             "page_id": page_id,
             "url": url,
             "title": title,
@@ -344,7 +356,7 @@ def process_once() -> int:
             "retrieved_at": retrieved_at,
             "doc_type": doc_type,
 
-            # NEW fields
+            # NEW fields for multilingual downstream logic
             "zh_url": zh_url,
             "zh_title_hans": zh_title_hans,
             "content_zh_hans": content_zh_hans,
@@ -386,4 +398,4 @@ if __name__ == "__main__":
                     time.sleep(INTERVAL)  # (existing)
     except KeyboardInterrupt:  
         print("Extractor interrupted; shutting down...", flush=True)  
-    sys.exit(0)  
+    sys.exit(0)

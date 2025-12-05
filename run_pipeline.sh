@@ -105,16 +105,16 @@ sleep 5  # give services time to stabilize
 
 # 3. Run each service, RUN_ONCE=1 makes each step run once and then exit cleanly
 echo "[3] Running crawler…" >> "$LOG_DIR/automation.log"
-docker compose run --rm -e RUN_ONCE=1 crawler python app.py >> "$LOG_DIR/automation.log" 2>&1
+run_step "crawler" docker compose run --rm -e RUN_ONCE=1 crawler python app.py >> "$LOG_DIR/automation.log" 2>&1
 
 echo "[4] Running extractor…" >> "$LOG_DIR/automation.log"
-docker compose run --rm -e RUN_ONCE=1 extractor python app.py >> "$LOG_DIR/automation.log" 2>&1
+run_step "extractor" docker compose run --rm -e RUN_ONCE=1 extractor python app.py >> "$LOG_DIR/automation.log" 2>&1
 
 echo "[5] Running summarizer…" >> "$LOG_DIR/automation.log"
-docker compose run --rm -e RUN_ONCE=1 summarizer python app.py >> "$LOG_DIR/automation.log" 2>&1
+run_step "summarizer" docker compose run --rm -e RUN_ONCE=1 summarizer python app.py >> "$LOG_DIR/automation.log" 2>&1
 
 echo "[6] Running publisher…" >> "$LOG_DIR/automation.log"
-docker compose run --rm publisher python app.py >> "$LOG_DIR/automation.log" 2>&1
+run_step "summarizer" docker compose run --rm publisher python app.py >> "$LOG_DIR/automation.log" 2>&1
 
 # cleanup of background services (brain + db) after run
 echo "[8] Stopping background services…" >> "$LOG_DIR/automation.log"
