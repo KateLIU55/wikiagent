@@ -1,5 +1,5 @@
-
 #!/usr/bin/env python3
+import hashlib, urllib.parse 
 import os, json, glob, time, sqlite3, urllib.parse, re, sys, signal
 from bs4 import BeautifulSoup
 from sqlite3 import DatabaseError
@@ -30,6 +30,54 @@ EXTRACTOR_MIN_CHARS       = int(os.getenv("EXTRACTOR_MIN_CHARS", "180"))
 
 UA = "ANJSO-Extractor/1.0 (+https://anjso.org/wiki)"
 HTTP_TIMEOUT = 20
+
+# ===== CHANGE E: topic_id normalizer (ASCII + prefer EN/url slug) =====
+
+def normalize_topic_id(
+    title: str | None,
+    url: str | None = None,
+    page_id: int | None = None,
+) -> str:
+    """
+    Build an ASCII-only, stable topic_id.
+
+    Preference:
+      1) English-ish slug from URL (/wiki/Some_Title)
+      2) ASCII from title
+      3) Fallback to page_id or a short hash
+    """
+    candidates: list[str] = []
+
+    # 1) URL slug (works well for enwiki; for zhwiki it will often be percent-encoded)
+    if url:
+        path = urllib.parse.urlsplit(url).path
+        if "/wiki/" in path:
+            slug = path.split("/wiki/", 1)[1]
+            candidates.append(slug)
+
+    # 2) Title
+    if title:
+        candidates.append(title)
+
+    # Try each candidate, keep the first that yields a non-empty ASCII slug
+    for c in candidates:
+        # decode %XX forms
+        s = urllib.parse.unquote(c)
+        # drop non-ASCII characters
+        s_ascii = s.encode("ascii", "ignore").decode("ascii")
+        s_ascii = s_ascii.lower().strip()
+        s_ascii = re.sub(r"\s+", "_", s_ascii)
+        s_ascii = re.sub(r"[^a-z0-9_]+", "", s_ascii)
+        if s_ascii:
+            return s_ascii
+
+    # 3) Fallbacks: page_id or hash
+    if page_id is not None:
+        return f"topic_{page_id}"
+
+    return "topic_" + hashlib.sha1((title or url or "").encode("utf-8")).hexdigest()[:8]
+
+
 
 def load_meta(page_id: int):
     p = os.path.join(RAW_DIR, f"{page_id}.meta.json")
@@ -238,36 +286,19 @@ def chinese_variants_from_en_html(en_html: bytes) -> tuple[str | None, str | Non
 
 def process_once() -> int:
     wrote = 0
+    ensure_out_dir()  # safe no-op if it already exists
+
     for html_path in sorted(glob.glob(os.path.join(RAW_DIR, "*.html"))):
         stem = os.path.splitext(os.path.basename(html_path))[0]
-        out_path = os.path.join(OUT_DIR, f"{stem}.json")
 
         # determine page_id & load meta early so we can see content_hash
-        try:  # compute page_id from filename
+        try:
             page_id = int(stem)
         except ValueError:
             page_id = None
 
-        # Load meta once here and derive current_hash
         meta = load_meta(page_id) if page_id is not None else None
         current_hash = meta.get("content_hash") if meta else None
-
-        # incremental extraction – skip if content_hash unchanged
-        if os.path.exists(out_path):
-            try:
-                existing = json.loads(open(out_path, "r", encoding="utf-8").read())
-                existing_hash = existing.get("content_hash")
-            except Exception:
-                existing_hash = None
-
-            if current_hash and existing_hash and existing_hash == current_hash:
-                print(
-                    f"[extractor] unchanged content_hash for page_id={page_id} "
-                    f"({stem}); skipping re-extract",
-                    flush=True,
-                )
-                continue
-
 
         try:
             with open(html_path, "rb") as f:
@@ -285,10 +316,9 @@ def process_once() -> int:
 
         text = extract_text_from_soup(soup)
 
-        # id & metadata
-        # meta already loaded earlier; reuse it here
+        # derive url / retrieved_at using meta or DB
         url, retrieved_at = None, None
-        content_hash = current_hash  # track content_hash from meta
+        content_hash = current_hash  # track content_hash from meta (if any)
 
         if meta:
             url = meta.get("url")
@@ -313,21 +343,44 @@ def process_once() -> int:
             print(f"[extractor] skip {doc_type} page_id={page_id} url={url} chars={len(text or '')}", flush=True)
             continue
 
-        # pull Chinese variants (if they exist)
         # Basic language flag from domain
         lang = "zh" if ("zh.wikipedia.org" in (url or "")) else "en"
 
         zh_url = zh_title_hans = content_zh_hans = content_zh_hant = None
 
-        if "en.wikipedia.org" in url:
+        if "en.wikipedia.org" in (url or ""):
             # We’re on the English page; try to locate and fetch Chinese siblings
             zh_url, zh_title_hans, content_zh_hans, content_zh_hant = chinese_variants_from_en_html(raw)
-        elif "zh.wikipedia.org" in url:
+        elif "zh.wikipedia.org" in (url or ""):
             # We’re already on the Chinese page; treat this content as Simplified Chinese by default
             content_zh_hans = text
             zh_url = url
             zh_title_hans = title
 
+        # ===== CHANGE F2: compute ASCII topic_id using title + url =====
+        topic_id = normalize_topic_id(
+            title=title or zh_title_hans,
+            url=url,
+            page_id=page_id,
+        )
+
+        # ===== CHANGE G2: use topic_id.json =====
+        out_path = os.path.join(OUT_DIR, f"{topic_id}.json")
+
+        # ===== CHANGE H2: incremental update + dedupe stays the same, but uses new out_path =====
+        clean_hash = current_hash or ""
+        if os.path.exists(out_path):
+            try:
+                existing = json.loads(open(out_path, "r", encoding="utf-8").read())
+                existing_hash = existing.get("content_hash")
+            except Exception:
+                existing_hash = None
+
+            if clean_hash and existing_hash and clean_hash == existing_hash:
+                print(f"[extractor] skip {topic_id}: unchanged content_hash", flush=True)
+                continue
+            else:
+                print(f"[extractor] updating {topic_id}: content changed or hash missing", flush=True)
 
         # Collect raw Wikipedia categories (for tagging later)
         raw_categories = [
@@ -335,7 +388,9 @@ def process_once() -> int:
             for a in soup.select("#mw-normal-catlinks a")
         ]
 
+        # ===== CHANGE J: include topic_id so summarizer/publisher can group by topic =====
         out = {
+            "topic_id": topic_id,
             "page_id": page_id,
             "url": url,
             "title": title,
@@ -344,7 +399,7 @@ def process_once() -> int:
             "retrieved_at": retrieved_at,
             "doc_type": doc_type,
 
-            # NEW fields
+            # NEW fields for multilingual downstream logic
             "zh_url": zh_url,
             "zh_title_hans": zh_title_hans,
             "content_zh_hans": content_zh_hans,
@@ -386,4 +441,4 @@ if __name__ == "__main__":
                     time.sleep(INTERVAL)  # (existing)
     except KeyboardInterrupt:  
         print("Extractor interrupted; shutting down...", flush=True)  
-    sys.exit(0)  
+    sys.exit(0)

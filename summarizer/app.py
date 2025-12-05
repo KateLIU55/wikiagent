@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Optional, Dict, Tuple
 from datetime import datetime, timezone  # for last_summarized_at timestamps
 from openai import OpenAI
+import hashlib
+import urllib.parse
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 CLEAN_DIR = DATA_DIR / "clean"
@@ -20,6 +22,94 @@ SKIP_CATEGORY_DOCS      = os.getenv("SUMMARIZER_SKIP_CATEGORIES", "1")
 SUMMARIZER_SKIP_LISTS   = os.getenv("SUMMARIZER_SKIP_LISTS", "1")
 MIN_INPUT_CHARS         = int(os.getenv("MIN_INPUT_CHARS", "280"))
 MAX_LLM_CHARS           = int(os.getenv("MAX_LLM_CHARS", "3500"))
+
+# ===== CHANGE S1: topic_id helper for dedupe across EN/zh variants (ASCII-only) =====
+def derive_topic_id(data: dict, json_path: Path) -> str:
+    """
+    Derive a stable, ASCII-only topic_id for this clean JSON.
+
+    Priority:
+    1) URL slug from /wiki/...
+    2) explicit topic_id from extractor
+    3) zh_title_hans
+    4) title
+    5) filename stem
+
+    Then normalize to: lowercase, underscores, [a-z0-9_].
+    If everything fails, fall back to a short hash.
+    """
+    url = (data.get("url") or "").strip()
+
+    candidates = []
+
+    # 1) URL-based slug, if available
+    if url:
+        path = urllib.parse.urlsplit(url).path
+        if "/wiki/" in path:
+            slug = path.split("/wiki/", 1)[1]
+            candidates.append(slug)
+
+    # 2–5) other textual sources
+    candidates.append((data.get("topic_id") or "").strip())
+    candidates.append((data.get("zh_title_hans") or "").strip())
+    candidates.append((data.get("title") or "").strip())
+    candidates.append(json_path.stem)
+
+    for raw in candidates:
+        if not raw:
+            continue
+        # decode URL-escaped sequences, then drop all non-ASCII
+        s = urllib.parse.unquote(raw)
+        s_ascii = s.encode("ascii", "ignore").decode("ascii")
+        s_ascii = s_ascii.lower().strip()
+        s_ascii = re.sub(r"\s+", "_", s_ascii)
+        s_ascii = re.sub(r"[^a-z0-9_]+", "", s_ascii)
+        if s_ascii:
+            return s_ascii
+
+    # last-resort fallback: hashed id
+    h = hashlib.sha1(json_path.stem.encode("utf-8")).hexdigest()[:8]
+    return f"topic_{h}"
+
+
+
+# ===== CHANGE S2: collect one best clean doc per topic_id =====
+def collect_best_clean_paths() -> Dict[str, Path]:
+    """
+    Scan CLEAN_DIR and pick at most one JSON per logical topic_id.
+    Preference:
+      1) documents that have zh article / zh content
+      2) latest retrieved_at timestamp
+    This prevents multiple zh-variant / duplicate pages from being summarized
+    into separate files.
+    """
+    best: Dict[str, Tuple[Tuple[int, str, str], Path]] = {}
+
+    for json_path in sorted(CLEAN_DIR.rglob("*.json")):
+        try:
+            data = json.loads(json_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        topic_id = derive_topic_id(data, json_path)
+
+        # has_zh: 1 if this clean record has any zh signals, else 0
+        has_zh = 1 if (
+            (data.get("zh_url") or "").strip()
+            or (data.get("content_zh_hans") or "").strip()
+            or (data.get("content_zh_hant") or "").strip()
+        ) else 0
+
+        retrieved_at = (data.get("retrieved_at") or "")
+        score = (has_zh, retrieved_at, json_path.name)
+
+        prev = best.get(topic_id)
+        if (prev is None) or (score > prev[0]):
+            best[topic_id] = (score, json_path)
+
+    # unwrap to topic_id -> Path
+    return {topic_id: path for topic_id, (score, path) in best.items()}
+
 
 # helper to remove raw wiki-style links like [[Target]] or [[Target|Label]]
 # from the source text before we send it to the LLM.
@@ -236,15 +326,24 @@ def convert_hans_to_hant(hans_text: str) -> Optional[str]:
 def process_once() -> int:
     wrote = 0
 
-    for json_path in sorted(CLEAN_DIR.rglob("*.json")):
-        out_path = SUMMARY_DIR / json_path.name
-        #if out_path.exists():
-        #    continue
+    # ===== CHANGE S3: only process one best clean JSON per topic_id =====
+    best_paths = collect_best_clean_paths()
 
+    for topic_id, json_path in sorted(best_paths.items()):
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
-       
+        except Exception as e:
+            print(f"[summarizer] skip unreadable clean JSON {json_path}: {e}", flush=True)
+            continue
 
+        # ensure topic_id is present in the in-memory dict as well
+        topic_id = derive_topic_id(data, json_path)
+        data["topic_id"] = topic_id
+
+        # ===== CHANGE S4: summaries named by topic_id, not raw filename =====
+        out_path = SUMMARY_DIR / f"{topic_id}.json"
+
+        try:
             url = data.get("url") or ""
             doc_type = (data.get("doc_type") or "").lower()
             lang = (data.get("lang") or "").lower()
@@ -294,7 +393,7 @@ def process_once() -> int:
             derived_tags.add("summary")
             data["tags"] = sorted(derived_tags)
 
-            # incremental summarization using content_hash
+            # ===== CHANGE S5: incremental summarization by content_hash + topic_id =====
             clean_hash = (data.get("content_hash") or "").strip()
             existing = None
             if out_path.exists():
@@ -308,12 +407,11 @@ def process_once() -> int:
                 if clean_hash and old_hash and clean_hash == old_hash:
                     # content unchanged → keep old summaries, skip work
                     print(
-                        f"[summarizer] unchanged content_hash for {url}, "
+                        f"[summarizer] unchanged content_hash for topic_id={topic_id}, "
                         f"skipping re-summarize",
                         flush=True,
                     )
                     continue
-        
 
             if (
                 not url
@@ -336,8 +434,6 @@ def process_once() -> int:
             content_main = strip_wikilinks_markup(content_main)
             zh_hans_text = strip_wikilinks_markup(zh_hans_text)
             zh_hant_text = strip_wikilinks_markup(zh_hant_text)
-            
-
 
             # If this JSON is actually a Chinese page and content_zh_* are empty,
             # treat `content` as Chinese (Simplified) instead of English.
@@ -378,11 +474,10 @@ def process_once() -> int:
             ):
                 print(f"[summarizer] filtered as IRRELEVANT: {url}", flush=True)
                 continue
-         
 
             print(
                 f"[summarizer] Summarizing {json_path.relative_to(DATA_DIR)} "
-                f"(lang={lang or 'unknown'}, zh_url={bool(data.get('zh_url'))})",
+                f"(topic_id={topic_id}, lang={lang or 'unknown'}, zh_url={bool(data.get('zh_url'))})",
                 flush=True,
             )
 
@@ -469,7 +564,6 @@ def process_once() -> int:
             en_summary   = cleanup_inline_links(en_summary,   "en")
             hans_summary = cleanup_inline_links(hans_summary, "zh_hans")
             hant_summary = cleanup_inline_links(hant_summary, "zh_hant")
-           
 
             # Cleanup Chinese note lines
             hans_summary = strip_chinese_notes(hans_summary)
@@ -488,7 +582,6 @@ def process_once() -> int:
             en_summary   = strip_wikilinks_markup(en_summary)
             hans_summary = strip_wikilinks_markup(hans_summary)
             hant_summary = strip_wikilinks_markup(hant_summary)
-           
 
             data["summary_en"] = en_summary
             data["summary_zh_hans"] = hans_summary
@@ -498,7 +591,9 @@ def process_once() -> int:
             if clean_hash:
                 data["content_hash"] = clean_hash
             data["last_summarized_at"] = datetime.now(timezone.utc).isoformat()
-          
+
+            # keep topic_id in the output JSON for publisher
+            data["topic_id"] = topic_id
 
             out_path.parent.mkdir(parents=True, exist_ok=True)
             out_path.write_text(
@@ -536,4 +631,4 @@ if __name__ == "__main__":
                     time.sleep(INTERVAL)  # (existing)
     except KeyboardInterrupt:
         print("Summarizer interrupted; shutting down...", flush=True)  
-    sys.exit(0)  
+    sys.exit(0)

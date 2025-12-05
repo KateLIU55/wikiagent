@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
@@ -90,12 +89,69 @@ def init_db():
     """)
     conn.commit(); conn.close()
 
+# CHANGE: strengthen Wikipedia URL canonicalization to collapse zh-HK / zh-SG / zh-MY
+#         variants, mobile hosts, and ?variant=... into a single canonical
+#         en/zh URL so duplicates don't get into DB or RAW_DIR.
 def canon_url(u):
+    # strip fragment
     u = urllib.parse.urldefrag(u)[0]
     p = urllib.parse.urlsplit(u)
-    if p.netloc.endswith("wikipedia.org") and "action=edit" in (p.query or ""):
+
+    host = (p.netloc or "").lower()
+
+    # only handle *.wikipedia.org; ignore other hosts for this crawler
+    if not host.endswith("wikipedia.org"):
         return None
-    return urllib.parse.urlunsplit((p.scheme, p.netloc, p.path, p.query, ""))
+
+    # skip edit pages entirely
+    if "action=edit" in (p.query or ""):
+        return None
+
+    # normalize mobile hosts like en.m.wikipedia.org -> en.wikipedia.org
+    host_parts = host.split(".")
+    if len(host_parts) >= 3 and host_parts[1] == "m":
+        # e.g. ['en','m','wikipedia','org'] -> ['en','wikipedia','org']
+        host_parts.pop(1)
+
+    # collapse Chinese regional variants to zh.wikipedia.org
+    sub = host_parts[0]
+    if sub.startswith("zh"):
+        sub = "zh"
+    elif sub == "en":
+        sub = "en"
+    else:
+        # ignore other language Wikipedias for this project (fr, de, etc.)
+        return None
+    host = sub + ".wikipedia.org"
+
+    path = p.path or ""
+
+    # normalize paths like /zh-hk/Title -> /wiki/Title
+    m = re.match(r"^/zh-[a-z-]+/(.+)$", path)
+    if m:
+        path = "/wiki/" + m.group(1)
+
+    query = p.query or ""
+
+    # canonicalize /w/index.php?title=Foo&... -> /wiki/Foo
+    if path == "/w/index.php":
+        qs = urllib.parse.parse_qs(query, keep_blank_values=True)
+        title = qs.get("title", [None])[0]
+        if title:
+            path = "/wiki/" + title
+        # after we convert to /wiki/Title we drop the query (we don't want variants/oldids)
+        query = ""
+
+    # drop ?variant=xxx from query (e.g., ?variant=zh-hk)
+    if query:
+        kv_pairs = urllib.parse.parse_qsl(query, keep_blank_values=True)
+        kv_pairs = [(k, v) for (k, v) in kv_pairs if k.lower() != "variant"]
+        query = urllib.parse.urlencode(kv_pairs, doseq=True)
+
+    scheme = p.scheme or "https"
+
+    # final canonical URL with no fragment
+    return urllib.parse.urlunsplit((scheme, host, path, query, ""))
 
 def compile_patterns(pats):
     if not pats: return []
@@ -522,4 +578,4 @@ if __name__ == "__main__":
                 time.sleep(60)   # (existing)
     except KeyboardInterrupt: 
         print("Crawler interrupted; shutting down...", flush=True) 
-    sys.exit(0)  
+    sys.exit(0)
