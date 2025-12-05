@@ -27,7 +27,7 @@ jobs:
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
         with:
-          path: site/output
+          path: wikiagent-deploy/site/output
 
       # CHANGE: Deploy to GitHub Pages
       - name: Deploy to GitHub Pages
