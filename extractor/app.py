@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import hashlib, urllib.parse 
 import os, json, glob, time, sqlite3, urllib.parse, re, sys, signal
 from bs4 import BeautifulSoup
 from sqlite3 import DatabaseError
@@ -30,13 +31,52 @@ EXTRACTOR_MIN_CHARS       = int(os.getenv("EXTRACTOR_MIN_CHARS", "180"))
 UA = "ANJSO-Extractor/1.0 (+https://anjso.org/wiki)"
 HTTP_TIMEOUT = 20
 
-# ===== CHANGE E: topic_id normalizer (shared English/Hans key per topic) =====
-def normalize_id(s: str) -> str:
-    """Normalize English or Hans title into a stable identifier."""
-    s = (s or "").strip().lower()
-    s = re.sub(r"\s+", "_", s)
-    s = re.sub(r"[^\w\-]+", "", s)
-    return s
+# ===== CHANGE E: topic_id normalizer (ASCII + prefer EN/url slug) =====
+
+def normalize_topic_id(
+    title: str | None,
+    url: str | None = None,
+    page_id: int | None = None,
+) -> str:
+    """
+    Build an ASCII-only, stable topic_id.
+
+    Preference:
+      1) English-ish slug from URL (/wiki/Some_Title)
+      2) ASCII from title
+      3) Fallback to page_id or a short hash
+    """
+    candidates: list[str] = []
+
+    # 1) URL slug (works well for enwiki; for zhwiki it will often be percent-encoded)
+    if url:
+        path = urllib.parse.urlsplit(url).path
+        if "/wiki/" in path:
+            slug = path.split("/wiki/", 1)[1]
+            candidates.append(slug)
+
+    # 2) Title
+    if title:
+        candidates.append(title)
+
+    # Try each candidate, keep the first that yields a non-empty ASCII slug
+    for c in candidates:
+        # decode %XX forms
+        s = urllib.parse.unquote(c)
+        # drop non-ASCII characters
+        s_ascii = s.encode("ascii", "ignore").decode("ascii")
+        s_ascii = s_ascii.lower().strip()
+        s_ascii = re.sub(r"\s+", "_", s_ascii)
+        s_ascii = re.sub(r"[^a-z0-9_]+", "", s_ascii)
+        if s_ascii:
+            return s_ascii
+
+    # 3) Fallbacks: page_id or hash
+    if page_id is not None:
+        return f"topic_{page_id}"
+
+    return "topic_" + hashlib.sha1((title or url or "").encode("utf-8")).hexdigest()[:8]
+
 
 
 def load_meta(page_id: int):
@@ -317,23 +357,26 @@ def process_once() -> int:
             zh_url = url
             zh_title_hans = title
 
-        # ===== CHANGE F: compute topic_id using hans title, fallback to main title =====
-        topic_title_for_id = zh_title_hans or title
-        topic_id = normalize_id(topic_title_for_id)
+        # ===== CHANGE F2: compute ASCII topic_id using title + url =====
+        topic_id = normalize_topic_id(
+            title=title or zh_title_hans,
+            url=url,
+            page_id=page_id,
+        )
 
-        # ===== CHANGE G: use topic_id.json instead of page_id.json =====
+        # ===== CHANGE G2: use topic_id.json =====
         out_path = os.path.join(OUT_DIR, f"{topic_id}.json")
 
-        # ===== CHANGE H + I: incremental update + dedupe by content_hash =====
+        # ===== CHANGE H2: incremental update + dedupe stays the same, but uses new out_path =====
+        clean_hash = current_hash or ""
         if os.path.exists(out_path):
             try:
-                with open(out_path, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
+                existing = json.loads(open(out_path, "r", encoding="utf-8").read())
                 existing_hash = existing.get("content_hash")
             except Exception:
                 existing_hash = None
 
-            if current_hash and existing_hash == current_hash:
+            if clean_hash and existing_hash and clean_hash == existing_hash:
                 print(f"[extractor] skip {topic_id}: unchanged content_hash", flush=True)
                 continue
             else:

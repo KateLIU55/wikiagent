@@ -637,12 +637,18 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             zh_title_hant = zh_title_hans
 
         # Decide a "topic key" used for grouping JSONs that are the same entity
+        # Prefer extractor/summarizer topic_id when present,
+        # but keep the special tunnel canonicalisation override.
+        topic_id = (data.get("topic_id") or "").strip()
+
         if (
             title in TUNNEL_TITLES
             or zh_title_hans in TUNNEL_TITLES
             or zh_title_hant in TUNNEL_TITLES
         ):
-            topic_key = "Nanjing Yingtian Avenue Yangtze River Tunnel"    
+            topic_key = "Nanjing Yingtian Avenue Yangtze River Tunnel" 
+        elif topic_id:
+            topic_key = topic_id   
         else:
             topic_key = title
 

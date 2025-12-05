@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import Optional, Dict, Tuple
 from datetime import datetime, timezone  # for last_summarized_at timestamps
 from openai import OpenAI
+import hashlib
+import urllib.parse
 
 DATA_DIR = Path(os.getenv("DATA_DIR", "/data"))
 CLEAN_DIR = DATA_DIR / "clean"
@@ -21,29 +23,54 @@ SUMMARIZER_SKIP_LISTS   = os.getenv("SUMMARIZER_SKIP_LISTS", "1")
 MIN_INPUT_CHARS         = int(os.getenv("MIN_INPUT_CHARS", "280"))
 MAX_LLM_CHARS           = int(os.getenv("MAX_LLM_CHARS", "3500"))
 
-# ===== CHANGE S1: topic_id helper for dedupe across EN/zh variants =====
+# ===== CHANGE S1: topic_id helper for dedupe across EN/zh variants (ASCII-only) =====
 def derive_topic_id(data: dict, json_path: Path) -> str:
     """
-    Derive a stable topic_id for this clean JSON.
+    Derive a stable, ASCII-only topic_id for this clean JSON.
 
     Priority:
-    1) explicit topic_id from extractor
-    2) zh_title_hans
-    3) title
-    4) filename stem
-    Then normalize to lowercase, underscores, and safe chars.
+    1) URL slug from /wiki/...
+    2) explicit topic_id from extractor
+    3) zh_title_hans
+    4) title
+    5) filename stem
+
+    Then normalize to: lowercase, underscores, [a-z0-9_].
+    If everything fails, fall back to a short hash.
     """
-    raw = (
-        (data.get("topic_id") or "").strip()
-        or (data.get("zh_title_hans") or "").strip()
-        or (data.get("title") or "").strip()
-        or json_path.stem
-        or ""
-    )
-    raw = raw.lower()
-    raw = re.sub(r"\s+", "_", raw)
-    raw = re.sub(r"[^\w\-]+", "", raw)
-    return raw or json_path.stem.lower()
+    url = (data.get("url") or "").strip()
+
+    candidates = []
+
+    # 1) URL-based slug, if available
+    if url:
+        path = urllib.parse.urlsplit(url).path
+        if "/wiki/" in path:
+            slug = path.split("/wiki/", 1)[1]
+            candidates.append(slug)
+
+    # 2–5) other textual sources
+    candidates.append((data.get("topic_id") or "").strip())
+    candidates.append((data.get("zh_title_hans") or "").strip())
+    candidates.append((data.get("title") or "").strip())
+    candidates.append(json_path.stem)
+
+    for raw in candidates:
+        if not raw:
+            continue
+        # decode URL-escaped sequences, then drop all non-ASCII
+        s = urllib.parse.unquote(raw)
+        s_ascii = s.encode("ascii", "ignore").decode("ascii")
+        s_ascii = s_ascii.lower().strip()
+        s_ascii = re.sub(r"\s+", "_", s_ascii)
+        s_ascii = re.sub(r"[^a-z0-9_]+", "", s_ascii)
+        if s_ascii:
+            return s_ascii
+
+    # last-resort fallback: hashed id
+    h = hashlib.sha1(json_path.stem.encode("utf-8")).hexdigest()[:8]
+    return f"topic_{h}"
+
 
 
 # ===== CHANGE S2: collect one best clean doc per topic_id =====
