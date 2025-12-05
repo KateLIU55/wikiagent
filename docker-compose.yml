@@ -3,7 +3,7 @@
 services:
   crawler:
     build: ./crawler
-    container_name: crawler
+   # container_name: crawler
     volumes:
       - ./crawler:/app
       - ./data:/data
@@ -19,7 +19,7 @@ services:
 
   extractor:
     build: ./extractor
-    container_name: extractor
+    #container_name: extractor
     volumes:
       - ./extractor:/app
       - ./data:/data
@@ -34,7 +34,7 @@ services:
 
   summarizer:
     build: ./summarizer
-    container_name: summarizer
+    #container_name: summarizer
     volumes:
       - ./summarizer:/app
       - ./data:/data
@@ -55,7 +55,7 @@ services:
 
   publisher:
     build: ./publisher
-    container_name: publisher
+    #container_name: publisher
     volumes:
       - ./publisher:/app
       - ./data:/data
@@ -76,7 +76,7 @@ services:
 
   db:
     image: busybox:latest
-    container_name: db
+    #container_name: db
     command: sh -c "mkdir -p /data && tail -f /dev/null"
     volumes:
       - ./data:/data
@@ -85,7 +85,7 @@ services:
 
   brain:
     build: ./brain
-    container_name: brain
+    #container_name: brain
     environment:
       DB_PATH: /data/wiki.sqlite
       # LLM_API_BASE: http://anjso.ddns.net:13001/api/v1/openai
@@ -105,7 +105,7 @@ services:
 
   wiki:
     image: busybox:latest
-    container_name: wiki
+    #container_name: wiki
     environment:
       TIDDLERS_DIR: /data/tiddlers
       SITE_DIR: /site
