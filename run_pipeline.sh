@@ -121,5 +121,34 @@ run_step "publisher" docker compose run --rm publisher python app.py >> "$LOG_DI
 echo "[8] Stopping background services…" >> "$LOG_DIR/automation.log"
 docker compose stop brain db >> "$LOG_DIR/automation.log" 2>&1
 
+# ===== CHANGE GIT1: auto-commit + push updated site/ if there are changes =====
+echo "[9] Checking for changes under site/ before git commit/push…" >> "$LOG_DIR/automation.log"
+
+CHANGES=$(git status --porcelain site || true)
+
+if [ -n "$CHANGES" ]; then
+  echo "[9] Changes detected in site/; preparing to commit and push…" >> "$LOG_DIR/automation.log"
+
+  # Stage the generated site (force in case of ignored files)
+  git add -f site >> "$LOG_DIR/automation.log" 2>&1
+
+  COMMIT_MSG="Automated wiki rebuild $(date '+%Y-%m-%d %H:%M:%S')"
+
+  # Try to commit; if there's nothing to commit (race/edge), don't fail the script
+  if git commit -m "$COMMIT_MSG" >> "$LOG_DIR/automation.log" 2>&1; then
+    echo "[9] git commit succeeded: $COMMIT_MSG" >> "$LOG_DIR/automation.log"
+  else
+    echo "[9] git commit: nothing to commit (possibly only metadata/timestamps changed)" >> "$LOG_DIR/automation.log"
+  fi
+
+  # Push to origin/main (this will still fail the pipeline on real network/auth errors)
+  echo "[9] Pushing to origin/main…" >> "$LOG_DIR/automation.log"
+  git push origin main >> "$LOG_DIR/automation.log" 2>&1
+  echo "[9] git push completed." >> "$LOG_DIR/automation.log"
+else
+  echo "[9] No changes under site/; skipping git commit and push." >> "$LOG_DIR/automation.log"
+fi
+# ===== END CHANGE GIT1 =====
+
 echo "--- Run completed at $(date '+%Y-%m-%d %H:%M:%S') ---" >> "$LOG_DIR/automation.log"
 echo "" >> "$LOG_DIR/automation.log"

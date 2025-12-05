@@ -36,9 +36,7 @@ __pycache__/
 # Ignore site/ by default, but keep the built wiki in site/output
 data/*
 !data/.gitkeep
-site/*
-!site/output/
-!site/output/**
+
 
 
 
