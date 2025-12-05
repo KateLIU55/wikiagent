@@ -33,8 +33,13 @@ __pycache__/
 .DS_Store
 
 # data/output (keep folders, not contents)
+# Ignore site/ by default, but keep the built wiki in site/output
 data/*
 !data/.gitkeep
+site/*
+!site/output/
+!site/output/**
+
 
 
 # sqlite/db dumps
