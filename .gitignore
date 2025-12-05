@@ -35,8 +35,7 @@ __pycache__/
 # data/output (keep folders, not contents)
 data/*
 !data/.gitkeep
-site/*
-!site/.gitkeep
+
 
 # sqlite/db dumps
 *.sqlite
@@ -50,11 +49,6 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# data/output (keep folders, not contents)
-data/*
-!data/.gitkeep
-site/*
-!site/.gitkeep
 
 # sqlite/db dumps
 *.sqlite

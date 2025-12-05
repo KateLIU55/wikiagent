@@ -1,0 +1,41 @@
+name: Deploy Wiki to GitHub Pages  # CHANGE:
+
+on:
+  push:
+    branches:
+      - main       # CHANGE: deploy whenever main is updated
+  workflow_dispatch:  # CHANGE: allow manual run from Actions tab
+
+permissions:
+  contents: read       # required for checkout
+  pages: write         # CHANGE: required for deploy-pages
+  id-token: write      # CHANGE: required for deploy-pages OIDC
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # CHANGE: Upload the static site produced by publisher (site/)
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site   # CHANGE: this contains index.html + output/
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+

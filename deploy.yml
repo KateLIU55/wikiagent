@@ -1,0 +1,36 @@
+name: Deploy wiki to GitHub Pages
+
+on:
+  push:
+    branches: [ main ]   # runs when cron pushes site/ to main
+  workflow_dispatch:      # optional: let you run it manually from Actions tab
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "wikiagent-pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # CHANGE: Upload the generated static site as Pages artifact
+      # We assume publisher wrote to site/output/
+      - name: Upload static site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/output
+
+      # CHANGE: Deploy to GitHub Pages
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
