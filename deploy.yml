@@ -1,9 +1,10 @@
+# .github/workflows/deploy-wiki.yml
 name: Deploy wiki to GitHub Pages
 
 on:
   push:
-    branches: [ main ]   # runs when cron pushes site/ to main
-  workflow_dispatch:      # optional: let you run it manually from Actions tab
+    branches: [ main ]   # runs when you push to main
+  workflow_dispatch:      # optional: run manually from Actions tab
 
 permissions:
   contents: read
@@ -22,15 +23,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # CHANGE: Upload the generated static site as Pages artifact
-      # We assume publisher wrote to site/output/
+      # CHANGE A1: build the site in CI using your pipeline script
+      - name: Build data + site via run_pipeline.sh
+        run: |
+          cd wikiagent-deploy
+          chmod +x run_pipeline.sh
+          ./run_pipeline.sh
+
+      # CHANGE A2: debug listing so we can see where the site was written
+      - name: Debug – list site folder
+        run: |
+          ls -R
+          ls -R wikiagent-deploy/site || echo "wikiagent-deploy/site does not exist"
+
+      # CHANGE A3: Upload the generated static site as Pages artifact
+      # We assume publisher wrote to wikiagent-deploy/site/output/
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
         with:
           path: wikiagent-deploy/site/output
 
-      # CHANGE: Deploy to GitHub Pages
+      # (unchanged) Deploy to GitHub Pages
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
-

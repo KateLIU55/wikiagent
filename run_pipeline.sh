@@ -71,6 +71,7 @@ cd "$PROJECT_DIR"
 run_step() {
   local LABEL="$1"; shift
   echo "[$LABEL] starting..." >> "$LOG_DIR/automation.log"
+  # CHANGE B1: let run_step handle redirection itself (no extra >> in caller)
   "$@" >> "$LOG_DIR/automation.log" 2>&1
   local RC=$?
   echo "[$LABEL] exit code=$RC" >> "$LOG_DIR/automation.log"
@@ -114,7 +115,7 @@ echo "[5] Running summarizer…" >> "$LOG_DIR/automation.log"
 run_step "summarizer" docker compose run --rm -e RUN_ONCE=1 summarizer python app.py >> "$LOG_DIR/automation.log" 2>&1
 
 echo "[6] Running publisher…" >> "$LOG_DIR/automation.log"
-run_step "summarizer" docker compose run --rm publisher python app.py >> "$LOG_DIR/automation.log" 2>&1
+run_step "publisher" docker compose run --rm publisher python app.py >> "$LOG_DIR/automation.log" 2>&1
 
 # cleanup of background services (brain + db) after run
 echo "[8] Stopping background services…" >> "$LOG_DIR/automation.log"
