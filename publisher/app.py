@@ -681,9 +681,11 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             or zh_title_hans in TUNNEL_TITLES
             or zh_title_hant in TUNNEL_TITLES
         ):
-            topic_key = "Nanjing Yingtian Avenue Yangtze River Tunnel" 
+            topic_key = "Nanjing Yingtian Avenue Yangtze River Tunnel"
+        elif zh_title_hans:
+            topic_key = zh_title_hans
         elif topic_id:
-            topic_key = topic_id   
+            topic_key = topic_id
         else:
             topic_key = title
 
@@ -1216,8 +1218,10 @@ def inject_tiddlers():
         </$reveal>
       </div>
 
-      <!-- English UI: only pages that have English content, non-Chinese titles,
-           and are NOT tag-definition tiddlers. -->
+      <!-- ==== CHANGE R2: English Recent shows ONLY normal pages
+           that actually have English content and non-Chinese titles.
+           Also hide tag-definition tiddlers and anything with
+           tag[excludeLists]. ======================================= -->
       <$reveal type="match" state="$:/state/wiki-language" text="en">
         <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]!tag[$:/tags/Tag]field:has_en[yes]field:title_script[en]sort[modified]reverse[]limit[50]]">
           <div class="tc-menu-list-item">
@@ -1228,7 +1232,8 @@ def inject_tiddlers():
         </$list>
       </$reveal>
 
-      <!-- Chinese UI: show all normal pages, but still hide Tag definition tiddlers -->
+      <!-- ==== CHANGE R3: Chinese UI Recent shows all normal pages
+           but STILL hides excludeLists + tag-definition tiddlers. == -->
       <$reveal type="nomatch" state="$:/state/wiki-language" text="en">
         <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]!tag[$:/tags/Tag]sort[modified]reverse[]limit[50]]">
           <div class="tc-menu-list-item">
@@ -1241,6 +1246,7 @@ def inject_tiddlers():
 
     </div>
     """).strip()
+
 
 
     more_all = textwrap.dedent("""
@@ -1519,6 +1525,14 @@ def inject_tiddlers():
 # Creates the wiki by invoking TiddlyWiki CLI
 def build_wiki():
     print("[publisher] Building wiki...", flush=True)
+    # ==== CHANGE C1: remove any previous wiki files so we don't keep
+    # stale tiddlers or old tag definitions between runs. ==========
+    if WIKI_WORKDIR.exists():
+        shutil.rmtree(WIKI_WORKDIR)
+    site_output = SITE_DIR / "output"
+    if site_output.exists():
+        shutil.rmtree(site_output)
+        
     ensure_tw_project()
     inject_tiddlers()
 
