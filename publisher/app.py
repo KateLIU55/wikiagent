@@ -7,6 +7,8 @@ import os, json, subprocess, hashlib, re
 from pathlib import Path
 from datetime import datetime, timezone
 import textwrap
+import shutil
+
 
 # Read environment variables for directories
 DATA_DIR     = Path(os.getenv("DATA_DIR", "/data"))
@@ -25,17 +27,33 @@ TUNNEL_TITLES = {
 # down to plain visible text so we don't carry Wikipedia markup into
 # our tiddlers and accidentally generate broken links.
 def strip_wikilinks_markup(text: str) -> str:
+    """
+    Remove raw wiki-style links from text so we don't leak markup
+    into tiddler bodies.
+
+    Handles:
+      - [[Title]]
+      - [[Title|Label]]  → keep Label
+      - <$link to="...">Label</$link>  → keep Label
+    """
     if not text:
         return text
 
-    def _repl(m: re.Match) -> str:
+    # 1) Strip TiddlyWiki <$link> widgets, keep inner label
+    def _repl_widget(m: re.Match) -> str:
+        return m.group(1)
+    text = re.sub(r"<\$link\b[^>]*>(.*?)</\$link>", _repl_widget, text, flags=re.DOTALL)
+
+    # 2) Strip [[Title|Label]] / [[Title]]
+    def _repl_brackets(m: re.Match) -> str:
         inner = m.group(1)
-        # If there's a pipe, keep the *label* (usually the last part).
         if "|" in inner:
+            # keep the *label* (usually the right side)
             return inner.split("|")[-1]
         return inner
 
-    return re.sub(r"\[\[([^\]]+)\]\]", _repl, text)
+    return re.sub(r"\[\[([^\]]+)\]\]", _repl_brackets, text)
+
 
 # helper to collapse nested wiki-links like [[[[Foo]]]] -> [[Foo]]
 def squash_nested_wikilinks(text: str) -> str:
@@ -134,11 +152,12 @@ def autolink_en(text: str, en_titles, current_title: str) -> str:
 
 def autolink_zh(text: str, zh_titles, current_title: str) -> str:
     """
-    Turn occurrences of Chinese titles into <$link> widgets:
-      <$link to="EnglishTitle">中文标题</$link>
+    Turn occurrences of Chinese titles into wiki links:
 
-    We strip any leftover Wikipedia [[...]] markup first so we
-    don't ever build nested links.
+      [[中文标题|EnglishTitle]]
+
+    We strip leftover Wikipedia [[...]] markup first so we
+    don't build nested links.
     """
     if not text:
         return text
@@ -146,20 +165,20 @@ def autolink_zh(text: str, zh_titles, current_title: str) -> str:
     # remove wiki-style [[...]] first so we only ever
     # autolink plain text phrases
     text = strip_wikilinks_markup(text)
-    
 
     for phrase, canon_title in zh_titles:
         if canon_title == current_title:
             continue
         if phrase in text:
-            # use <$link> instead of [[...|...]]
+            # Use standard wiki-link so TW always renders it
+            #   [[label|target-title]]
             text = text.replace(
                 phrase,
-                f'<$link to="{canon_title}">{phrase}</$link>',
+                f"[[{phrase}|{canon_title}]]",
             )
-            
 
     return text
+
 
 
 
@@ -170,38 +189,54 @@ def slugify(s: str) -> str:
     s = _slug_re.sub("-", s)
     return re.sub(r"-{2,}", "-", s)[:80]
 
-# ensure Tiddlywiki project structure exists, create a tiddlywiki.info file
 def ensure_tw_project():
+    """
+    Make sure we have a clean TiddlyWiki project.
+
+    IMPORTANT FIX:
+      - Always wipe WIKI_WORKDIR before each build so we don't keep
+        stale .tid files from old runs (which caused duplicate pages,
+        Chinese-only tiddlers to linger, etc.).
+    """
+    # ===== CHANGE P1: start with a clean workspace =====
+    if WIKI_WORKDIR.exists():
+        shutil.rmtree(WIKI_WORKDIR)
+
     (WIKI_WORKDIR / "tiddlers").mkdir(parents=True, exist_ok=True)
+
     info = {
-    "description": "Auto-generated wiki",
-    "plugins": [
-        "tiddlywiki/tiddlyweb",
-        "tiddlywiki/filesystem",
-        "tiddlywiki/highlight"
-    ],
-    "themes": [
-        "tiddlywiki/vanilla",
-        "tiddlywiki/snowwhite"
-    ],
-    "languages": [
-        "es-ES",
-        "fr-FR",
-        "en-US",
-        "zh-Hans",
-        "zh-Hant"
-    ],
-    "build": {
-        "index": [
-            "--render",
-            "$:/plugins/tiddlywiki/tiddlyweb/save/offline",
-            "index.html",
-            "text/plain"
-        ]
+        "description": "Auto-generated wiki",
+        "plugins": [
+            "tiddlywiki/tiddlyweb",
+            "tiddlywiki/filesystem",
+            "tiddlywiki/highlight"
+        ],
+        "themes": [
+            "tiddlywiki/vanilla",
+            "tiddlywiki/snowwhite"
+        ],
+        "languages": [
+            "es-ES",
+            "fr-FR",
+            "en-US",
+            "zh-Hans",
+            "zh-Hant"
+        ],
+        "build": {
+            "index": [
+                "--render",
+                "$:/plugins/tiddlywiki/tiddlyweb/save/offline",
+                "index.html",
+                "text/plain"
+            ]
+        }
     }
-}
-    (WIKI_WORKDIR / "tiddlywiki.info").write_text(json.dumps(info, indent=2), encoding="utf-8")
-    print("[publisher] Created /tmp/wiki/tiddlywiki.info", flush=True)
+    (WIKI_WORKDIR / "tiddlywiki.info").write_text(
+        json.dumps(info, indent=2),
+        encoding="utf-8"
+    )
+    print("[publisher] Created fresh /tmp/wiki with tiddlywiki.info", flush=True)
+
 
 # Create a homepage that leads to the wiki site using a search bar.
 # Includes inline CSS and JavaScript
@@ -708,10 +743,7 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             if zh_title_hans and not zh_title_hant:
                 zh_title_hant = zh_title_hans
 
-            # ==== CHANGE R1: record whether this title looks Chinese or not ====
-            is_title_chinese = looks_like_chinese(title)
-            title_script = "zh" if is_title_chinese else "en"
-            # ==== END CHANGE R1 ================================================
+           
 
             # SPECIAL CASE: tunnel topic canonicalisation  
             if topic_key == "Nanjing Yingtian Avenue Yangtze River Tunnel":
@@ -743,8 +775,13 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             if looks_like_chinese(title) and en_summary:                       
                 derived = derive_english_title_from_summary(en_summary)        
                 if derived:                                                    
-                    print(f"[publisher] Using derived English title '{derived}' for topic '{topic_key}' (was '{title}')", flush=True)   
-                    title = derived                                            
+                    print(
+                        f"[publisher] Using derived English title '{derived}' "
+                        f"for topic '{topic_key}' (was '{title}')",
+                        flush=True,
+                    )
+                    title = derived
+                                         
 
             # INTERNAL AUTOLINKING  
             en_linked   = autolink_en(en_summary,   en_titles, title)
@@ -761,18 +798,18 @@ def create_tiddlers(en_titles, zh_titles) -> int:
 
             # Language-aware body: EN / zh-Hans / zh-Hant
             body = textwrap.dedent(f"""
-            <$list filter="[[$:/state/wiki-language]get[text]match[en]]">
-            {en_linked}
-            </$list>
+<$list filter="[[$:/state/wiki-language]get[text]match[en]]">
+{en_linked}
+</$list>
 
-            <$list filter="[[$:/state/wiki-language]get[text]match[zh-hans]]">
-            {hans_linked}
-            </$list>
+<$list filter="[[$:/state/wiki-language]get[text]match[zh-hans]]">
+{hans_linked}
+</$list>
 
-            <$list filter="[[$:/state/wiki-language]get[text]match[zh-hant]]">
-            {hant_linked}
-            </$list>
-            """).strip()
+<$list filter="[[$:/state/wiki-language]get[text]match[zh-hant]]">
+{hant_linked}
+</$list>
+""").strip()
 
             # as a final safety net, collapse any nested wiki-links
             # that might still exist in the combined body, e.g. [[[[Foo]]]]
@@ -803,6 +840,13 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             if zh_source and (hans_summary or hant_summary):
                 source_parts.append(f"[[{zh_source}]]")
             source_line = "source: " + (" ; ".join(source_parts) if source_parts else "unknown")
+
+            # After all title adjustments, decide which script the *final* title
+            # uses. This powers language-aware lists (Recent, More → All).
+            # CHANGE R2: compute title_script here, not earlier.
+            is_title_chinese = looks_like_chinese(title)
+            title_script = "zh" if is_title_chinese else "en"
+
 
             # HEADER FIELDS  
             header_lines = [
@@ -950,6 +994,8 @@ def create_tag_tiddlers():
             f"title: {tag}",
             "tags: $:/tags/Tag excludeLists",
             "type: text/vnd.tiddlywiki",
+            "has_en: no",
+            "title_script: zh",
             f"caption-en: {en_label}",
             f"caption-zh-hans: {zh_hans_label}",
             f"caption-zh-hant: {zh_hant_label}",
@@ -1170,10 +1216,10 @@ def inject_tiddlers():
         </$reveal>
       </div>
 
-      <!-- When English is selected, only show pages that have English content
-          AND whose titles are not Chinese. -->
+      <!-- English UI: only pages that have English content, non-Chinese titles,
+           and are NOT tag-definition tiddlers. -->
       <$reveal type="match" state="$:/state/wiki-language" text="en">
-        <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]field:has_en[yes]field:title_script[en]sort[modified]reverse[]limit[50]]">
+        <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]!tag[$:/tags/Tag]field:has_en[yes]field:title_script[en]sort[modified]reverse[]limit[50]]">
           <div class="tc-menu-list-item">
             <$link to=<<currentTiddler>>>
               <<lang-caption>>
@@ -1182,9 +1228,9 @@ def inject_tiddlers():
         </$list>
       </$reveal>
 
-      <!-- For Chinese UI, show all recent pages (even if they don't have English) -->
+      <!-- Chinese UI: show all normal pages, but still hide Tag definition tiddlers -->
       <$reveal type="nomatch" state="$:/state/wiki-language" text="en">
-        <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]sort[modified]reverse[]limit[50]]">
+        <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]!tag[$:/tags/Tag]sort[modified]reverse[]limit[50]]">
           <div class="tc-menu-list-item">
             <$link to=<<currentTiddler>>>
               <<lang-caption>>
@@ -1196,7 +1242,7 @@ def inject_tiddlers():
     </div>
     """).strip()
 
-    # ==== CHANGE M1: override "More → All" to be language-aware and hide tag defs ====
+
     more_all = textwrap.dedent("""
     title: $:/core/ui/SideBar/More/All
     type: text/vnd.tiddlywiki
@@ -1204,8 +1250,8 @@ def inject_tiddlers():
     \whitespace trim
     <div class="tc-sidebar-lists">
 
-      <!-- English UI: show only pages that have real English content
-           and non-Chinese titles, and never show tag-definition tiddlers. -->
+      <!-- English UI: only pages that have English content, non-Chinese titles,
+           and are NOT tag-definition tiddlers. -->
       <$reveal type="match" state="$:/state/wiki-language" text="en">
         <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]!tag[$:/tags/Tag]field:has_en[yes]field:title_script[en]sort[title]]">
           <div class="tc-menu-list-item">
@@ -1216,7 +1262,7 @@ def inject_tiddlers():
         </$list>
       </$reveal>
 
-      <!-- Chinese UI: show all normal pages (still hide tag-definition tiddlers). -->
+      <!-- Chinese UI: show all normal pages, but still hide Tag definition tiddlers. -->
       <$reveal type="nomatch" state="$:/state/wiki-language" text="en">
         <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]!tag[$:/tags/Tag]sort[title]]">
           <div class="tc-menu-list-item">
@@ -1229,7 +1275,7 @@ def inject_tiddlers():
 
     </div>
     """).strip()
-    # ==== END CHANGE M1 ======================================================
+
 
 
 
