@@ -28,31 +28,37 @@ TUNNEL_TITLES = {
 # our tiddlers and accidentally generate broken links.
 def strip_wikilinks_markup(text: str) -> str:
     """
-    Remove raw wiki-style links from text so we don't leak markup
-    into tiddler bodies.
-
-    Handles:
-      - [[Title]]
-      - [[Title|Label]]  → keep Label
-      - <$link to="...">Label</$link>  → keep Label
+    Remove raw wiki-style [[Title]] / [[Title|Label]] links,
+    keeping only the visible label. DOES NOT touch <$link> widgets.
     """
     if not text:
         return text
 
-    # 1) Strip TiddlyWiki <$link> widgets, keep inner label
-    def _repl_widget(m: re.Match) -> str:
-        return m.group(1)
-    text = re.sub(r"<\$link\b[^>]*>(.*?)</\$link>", _repl_widget, text, flags=re.DOTALL)
-
-    # 2) Strip [[Title|Label]] / [[Title]]
     def _repl_brackets(m: re.Match) -> str:
         inner = m.group(1)
         if "|" in inner:
-            # keep the *label* (usually the right side)
+            # keep the *label* (usually the right-hand side)
             return inner.split("|")[-1]
         return inner
 
     return re.sub(r"\[\[([^\]]+)\]\]", _repl_brackets, text)
+
+
+def normalize_for_compare(s: str) -> str:
+    """
+    Normalise a title for 'same topic' comparison:
+    - lowercase
+    - drop spaces, hyphens, and punctuation
+    So 'Six Dynasties', 'Six-Dynasties' -> 'sixdynasties'.
+    """
+    if not s:
+        return ""
+    s = s.lower()
+    # remove spaces and hyphens first
+    s = re.sub(r"[\s\-_]+", "", s)
+    # drop anything that isn't a letter or digit
+    s = re.sub(r"[^a-z0-9]+", "", s)
+    return s
 
 
 # helper to collapse nested wiki-links like [[[[Foo]]]] -> [[Foo]]
@@ -130,54 +136,104 @@ def build_title_index():
 
 def autolink_en(text: str, en_titles, current_title: str) -> str:
     """
-    Turn occurrences of other English titles into [[Title]] links.
+    Turn occurrences of other English titles into <$link> widgets:
 
-    - Only link plain text, not things already inside [[...]].
+      <$link to="Title">Title</$link>
+
+    We **do not** link:
+      - the current tiddler's own title, even with small spelling variants
+        (Six-Dynasties vs Six Dynasties)
     """
     if not text:
         return text
+
+    current_norm = normalize_for_compare(current_title)
 
     for t in en_titles:
+        # Skip exact string match
         if t == current_title:
             continue
-        # Don't touch occurrences that are already part of a [[wikilink]]
-        #   (?<!\[)  → previous character is not '[' (avoids [[Title]])
-        #   (?!\])   → next character is not ']'  (avoids [[Title]])
+
+        # Skip titles that normalise to the same thing as this page's title
+        # (prevents an article about "Six Dynasties"/"Six-Dynasty" from
+        #  linking that phrase to a separate tiddler).
+        if normalize_for_compare(t) == current_norm:
+            continue
+
+        # Match whole words, avoiding anything that is already part of [[...]]
         pattern = r'(?<!\[)\b' + re.escape(t) + r'\b(?!\])'
-        text = re.sub(pattern, r'[[\g<0>]]', text)
+
+        def _repl(m: re.Match) -> str:
+            visible = m.group(0)
+            return f'<$link to="{t}">{visible}</$link>'
+
+        text = re.sub(pattern, _repl, text)
 
     return text
 
 
 
-def autolink_zh(text: str, zh_titles, current_title: str) -> str:
+def autolink_zh(
+    text: str,
+    zh_titles,
+    current_title: str,
+    self_phrases: set[str] | None = None,
+) -> str:
     """
-    Turn occurrences of Chinese titles into wiki links:
+    Turn occurrences of Chinese titles into <$link> widgets:
 
-      [[中文标题|EnglishTitle]]
+        <$link to="栖霞寺">栖霞寺</$link>
 
-    We strip leftover Wikipedia [[...]] markup first so we
-    don't build nested links.
+    Rules:
+      - Do NOT touch text that is already inside an existing <$link ...>...</$link>
+      - Link TO the canonical tiddler title (canon_title), but DISPLAY the
+        Chinese phrase as the label.
+      - Skip linking phrases that belong to this tiddler (title or zh_title_*),
+        to avoid self-links (e.g. 六朝 linking to itself in its own article).
     """
     if not text:
         return text
 
-    # remove wiki-style [[...]] first so we only ever
-    # autolink plain text phrases
-    text = strip_wikilinks_markup(text)
+    if self_phrases is None:
+        self_phrases = set()
 
+    # We treat existing <$link ...>...</$link> as atomic.
+    link_pattern = re.compile(r"(<\$link\b[^>]*>.*?</\$link>)", re.DOTALL)
+
+    # IMPORTANT:
+    # We run per-phrase, and for *each* phrase we re-split the current text
+    # around existing <$link> blocks. That way, once we've created a link,
+    # later phrases never rewrite inside it.
     for phrase, canon_title in zh_titles:
-        if canon_title == current_title:
+        if not phrase:
             continue
-        if phrase in text:
-            # Use standard wiki-link so TW always renders it
-            #   [[label|target-title]]
-            text = text.replace(
+        if phrase in self_phrases:
+            # don't link this page's own name(s)
+            continue
+        if phrase not in text:
+            # quick skip
+            continue
+
+        parts = link_pattern.split(text)
+        for i in range(0, len(parts), 2):
+            chunk = parts[i]
+            if not chunk or phrase not in chunk:
+                continue
+
+            # link TO the canonical title (usually English),
+            # but display the Chinese phrase as the label
+            chunk = chunk.replace(
                 phrase,
-                f"[[{phrase}|{canon_title}]]",
+                f'<$link to="{canon_title}">{phrase}</$link>',
             )
+            parts[i] = chunk
+
+        text = "".join(parts)
 
     return text
+
+
+
 
 
 
@@ -745,7 +801,16 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             if zh_title_hans and not zh_title_hant:
                 zh_title_hant = zh_title_hans
 
-           
+            # Build a set of phrases that belong to THIS tiddler,
+            # so we don't autolink them in its own body (self-links).
+            self_phrases: set[str] = set()
+            if looks_like_chinese(title):
+                self_phrases.add(title)
+            if zh_title_hans:
+                self_phrases.add(zh_title_hans)
+            if zh_title_hant:
+                self_phrases.add(zh_title_hant)
+
 
             # SPECIAL CASE: tunnel topic canonicalisation  
             if topic_key == "Nanjing Yingtian Avenue Yangtze River Tunnel":
@@ -785,10 +850,13 @@ def create_tiddlers(en_titles, zh_titles) -> int:
                     title = derived
                                          
 
-            # INTERNAL AUTOLINKING  
+            # INTERNAL AUTOLINKING 
+
             en_linked   = autolink_en(en_summary,   en_titles, title)
-            hans_linked = autolink_zh(hans_summary, zh_titles, title)
-            hant_linked = autolink_zh(hant_summary, zh_titles, title)
+            hans_linked = autolink_zh(hans_summary, zh_titles, title, self_phrases)
+            hant_linked = autolink_zh(hant_summary, zh_titles, title, self_phrases)
+
+
 
             # Mark if this article actually has usable English content
             has_en = "yes" if en_summary else "no"    
@@ -812,6 +880,11 @@ def create_tiddlers(en_titles, zh_titles) -> int:
 {hant_linked}
 </$list>
 """).strip()
+
+            # At this point any legitimate links we created are <$link> widgets.
+            # So any leftover [[...]] is raw Wikipedia markup. Strip it down
+            # to just its visible label (last part after '|').
+            #body = strip_wikilinks_markup(body)    
 
             # as a final safety net, collapse any nested wiki-links
             # that might still exist in the combined body, e.g. [[[[Foo]]]]
@@ -1527,8 +1600,7 @@ def build_wiki():
     print("[publisher] Building wiki...", flush=True)
     # ==== CHANGE C1: remove any previous wiki files so we don't keep
     # stale tiddlers or old tag definitions between runs. ==========
-    if WIKI_WORKDIR.exists():
-        shutil.rmtree(WIKI_WORKDIR)
+
     site_output = SITE_DIR / "output"
     if site_output.exists():
         shutil.rmtree(site_output)
