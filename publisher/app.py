@@ -708,6 +708,11 @@ def create_tiddlers(en_titles, zh_titles) -> int:
             if zh_title_hans and not zh_title_hant:
                 zh_title_hant = zh_title_hans
 
+            # ==== CHANGE R1: record whether this title looks Chinese or not ====
+            is_title_chinese = looks_like_chinese(title)
+            title_script = "zh" if is_title_chinese else "en"
+            # ==== END CHANGE R1 ================================================
+
             # SPECIAL CASE: tunnel topic canonicalisation  
             if topic_key == "Nanjing Yingtian Avenue Yangtze River Tunnel":
                 title = "Nanjing Yingtian Avenue Yangtze River Tunnel"
@@ -807,6 +812,7 @@ def create_tiddlers(en_titles, zh_titles) -> int:
                 f"created: {created}",
                 f"modified: {created}",
                 f"has_en: {has_en}",
+                f"title_script: {title_script}", 
             ]
             if zh_title_hans:
                 header_lines.append(f"zh_title_hans: {zh_title_hans}")
@@ -1164,9 +1170,10 @@ def inject_tiddlers():
         </$reveal>
       </div>
 
-      <!-- When English is selected, only show pages that have English content -->
+      <!-- When English is selected, only show pages that have English content
+          AND whose titles are not Chinese. -->
       <$reveal type="match" state="$:/state/wiki-language" text="en">
-        <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]field:has_en[yes]sort[modified]reverse[]limit[50]]">
+        <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]field:has_en[yes]field:title_script[en]sort[modified]reverse[]limit[50]]">
           <div class="tc-menu-list-item">
             <$link to=<<currentTiddler>>>
               <<lang-caption>>
@@ -1188,6 +1195,42 @@ def inject_tiddlers():
 
     </div>
     """).strip()
+
+    # ==== CHANGE M1: override "More → All" to be language-aware and hide tag defs ====
+    more_all = textwrap.dedent("""
+    title: $:/core/ui/SideBar/More/All
+    type: text/vnd.tiddlywiki
+
+    \whitespace trim
+    <div class="tc-sidebar-lists">
+
+      <!-- English UI: show only pages that have real English content
+           and non-Chinese titles, and never show tag-definition tiddlers. -->
+      <$reveal type="match" state="$:/state/wiki-language" text="en">
+        <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]!tag[$:/tags/Tag]field:has_en[yes]field:title_script[en]sort[title]]">
+          <div class="tc-menu-list-item">
+            <$link to=<<currentTiddler>>>
+              <<lang-caption>>
+            </$link>
+          </div>
+        </$list>
+      </$reveal>
+
+      <!-- Chinese UI: show all normal pages (still hide tag-definition tiddlers). -->
+      <$reveal type="nomatch" state="$:/state/wiki-language" text="en">
+        <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]!tag[$:/tags/Tag]sort[title]]">
+          <div class="tc-menu-list-item">
+            <$link to=<<currentTiddler>>>
+              <<lang-caption>>
+            </$link>
+          </div>
+        </$list>
+      </$reveal>
+
+    </div>
+    """).strip()
+    # ==== END CHANGE M1 ======================================================
+
 
 
     tag_template = textwrap.dedent("""
@@ -1419,6 +1462,8 @@ def inject_tiddlers():
     (tiddlers_dir / "__tagmanager-listitem.tid").write_text(tagmanager_listitem, encoding="utf-8")
     (tiddlers_dir / "__tag-styles.tid").write_text(tag_styles, encoding="utf-8")
     (tiddlers_dir / "__tag-clickoutside-startup.tid").write_text(tag_clickoutside_startup, encoding="utf-8")
+    (tiddlers_dir / "__more-all.tid").write_text(more_all, encoding="utf-8") 
+
 
     # welcome + default-tiddlers
     (tiddlers_dir / "__welcome.tid").write_text(welcome_tiddler, encoding="utf-8")
