@@ -23,7 +23,7 @@ SUMMARIZER_SKIP_LISTS   = os.getenv("SUMMARIZER_SKIP_LISTS", "1")
 MIN_INPUT_CHARS         = int(os.getenv("MIN_INPUT_CHARS", "280"))
 MAX_LLM_CHARS           = int(os.getenv("MAX_LLM_CHARS", "3500"))
 
-# ===== CHANGE S1: topic_id helper for dedupe across EN/zh variants (ASCII-only) =====
+# topic_id helper for dedupe across EN/zh variants (ASCII-only) 
 def derive_topic_id(data: dict, json_path: Path) -> str:
     """
     Derive a stable, ASCII-only topic_id for this clean JSON.
@@ -73,7 +73,7 @@ def derive_topic_id(data: dict, json_path: Path) -> str:
 
 
 
-# ===== CHANGE S2: collect one best clean doc per topic_id =====
+# collect one best clean doc per topic_id
 def collect_best_clean_paths() -> Dict[str, Path]:
     """
     Scan CLEAN_DIR and pick at most one JSON per logical topic_id.
@@ -326,7 +326,7 @@ def convert_hans_to_hant(hans_text: str) -> Optional[str]:
 def process_once() -> int:
     wrote = 0
 
-    # ===== CHANGE S3: only process one best clean JSON per topic_id =====
+    # only process one best clean JSON per topic_id 
     best_paths = collect_best_clean_paths()
 
     for topic_id, json_path in sorted(best_paths.items()):
@@ -340,7 +340,7 @@ def process_once() -> int:
         topic_id = derive_topic_id(data, json_path)
         data["topic_id"] = topic_id
 
-        # ===== CHANGE S4: summaries named by topic_id, not raw filename =====
+        # summaries named by topic_id, not raw filename 
         out_path = SUMMARY_DIR / f"{topic_id}.json"
 
         try:
@@ -393,7 +393,7 @@ def process_once() -> int:
             derived_tags.add("summary")
             data["tags"] = sorted(derived_tags)
 
-            # ===== CHANGE S5: incremental summarization by content_hash + topic_id =====
+            # incremental summarization by content_hash + topic_id 
             clean_hash = (data.get("content_hash") or "").strip()
             existing = None
             if out_path.exists():

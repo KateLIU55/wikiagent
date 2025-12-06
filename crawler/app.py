@@ -89,7 +89,7 @@ def init_db():
     """)
     conn.commit(); conn.close()
 
-# CHANGE: strengthen Wikipedia URL canonicalization to collapse zh-HK / zh-SG / zh-MY
+# strengthen Wikipedia URL canonicalization to collapse zh-HK / zh-SG / zh-MY
 #         variants, mobile hosts, and ?variant=... into a single canonical
 #         en/zh URL so duplicates don't get into DB or RAW_DIR.
 def canon_url(u):

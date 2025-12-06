@@ -23,27 +23,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # CHANGE A1: build the site in CI using your pipeline script
+      # build the site in CI using your pipeline script
       - name: Build data + site via run_pipeline.sh
         run: |
           cd wikiagent-deploy
           chmod +x run_pipeline.sh
           ./run_pipeline.sh
 
-      # CHANGE A2: debug listing so we can see where the site was written
+      # debug listing so we can see where the site was written
       - name: Debug – list site folder
         run: |
           ls -R
           ls -R wikiagent-deploy/site || echo "wikiagent-deploy/site does not exist"
 
-      # CHANGE A3: Upload the generated static site as Pages artifact
+      # Upload the generated static site as Pages artifact
       # We assume publisher wrote to wikiagent-deploy/site/output/
       - name: Upload static site
         uses: actions/upload-pages-artifact@v3
         with:
           path: wikiagent-deploy/site/output
 
-      # (unchanged) Deploy to GitHub Pages
+      # Deploy to GitHub Pages
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4

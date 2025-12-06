@@ -71,7 +71,7 @@ cd "$PROJECT_DIR"
 run_step() {
   local LABEL="$1"; shift
   echo "[$LABEL] starting..." >> "$LOG_DIR/automation.log"
-  # CHANGE B1: let run_step handle redirection itself (no extra >> in caller)
+  # let run_step handle redirection itself (no extra >> in caller)
   "$@" >> "$LOG_DIR/automation.log" 2>&1
   local RC=$?
   echo "[$LABEL] exit code=$RC" >> "$LOG_DIR/automation.log"
@@ -121,7 +121,7 @@ run_step "publisher" docker compose run --rm publisher python app.py >> "$LOG_DI
 echo "[8] Stopping background services…" >> "$LOG_DIR/automation.log"
 docker compose stop brain db >> "$LOG_DIR/automation.log" 2>&1
 
-# ===== CHANGE GIT1: auto-commit + push updated site/ if there are changes =====
+#  auto-commit + push updated site/ if there are changes 
 echo "[9] Checking for changes under site/ before git commit/push…" >> "$LOG_DIR/automation.log"
 
 CHANGES=$(git status --porcelain site || true)
@@ -148,7 +148,7 @@ if [ -n "$CHANGES" ]; then
 else
   echo "[9] No changes under site/; skipping git commit and push." >> "$LOG_DIR/automation.log"
 fi
-# ===== END CHANGE GIT1 =====
+
 
 echo "--- Run completed at $(date '+%Y-%m-%d %H:%M:%S') ---" >> "$LOG_DIR/automation.log"
 echo "" >> "$LOG_DIR/automation.log"

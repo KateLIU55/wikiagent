@@ -31,7 +31,7 @@ EXTRACTOR_MIN_CHARS       = int(os.getenv("EXTRACTOR_MIN_CHARS", "180"))
 UA = "ANJSO-Extractor/1.0 (+https://anjso.org/wiki)"
 HTTP_TIMEOUT = 20
 
-# ===== CHANGE E: topic_id normalizer (ASCII + prefer EN/url slug) =====
+# topic_id normalizer (ASCII + prefer EN/url slug) 
 
 def normalize_topic_id(
     title: str | None,
@@ -357,17 +357,17 @@ def process_once() -> int:
             zh_url = url
             zh_title_hans = title
 
-        # ===== CHANGE F2: compute ASCII topic_id using title + url =====
+        # compute ASCII topic_id using title + url 
         topic_id = normalize_topic_id(
             title=title or zh_title_hans,
             url=url,
             page_id=page_id,
         )
 
-        # ===== CHANGE G2: use topic_id.json =====
+        # use topic_id.json 
         out_path = os.path.join(OUT_DIR, f"{topic_id}.json")
 
-        # ===== CHANGE H2: incremental update + dedupe stays the same, but uses new out_path =====
+        # incremental update + dedupe stays the same, but uses new out_path
         clean_hash = current_hash or ""
         if os.path.exists(out_path):
             try:
@@ -388,7 +388,7 @@ def process_once() -> int:
             for a in soup.select("#mw-normal-catlinks a")
         ]
 
-        # ===== CHANGE J: include topic_id so summarizer/publisher can group by topic =====
+        # include topic_id so summarizer/publisher can group by topic 
         out = {
             "topic_id": topic_id,
             "page_id": page_id,

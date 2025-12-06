@@ -28,20 +28,32 @@ TUNNEL_TITLES = {
 # our tiddlers and accidentally generate broken links.
 def strip_wikilinks_markup(text: str) -> str:
     """
-    Remove raw wiki-style [[Title]] / [[Title|Label]] links,
-    keeping only the visible label. DOES NOT touch <$link> widgets.
+    Remove raw wiki-style links from text so we don't leak markup
+    into tiddler bodies.
+
+    Handles:
+      - [[Title]]
+      - [[Title|Label]]      → keep Label
+      - <$link to="...">Label</$link>  → keep Label
     """
     if not text:
         return text
 
+    # 1) Strip TiddlyWiki <$link> widgets, keep inner label
+    def _repl_widget(m: re.Match) -> str:
+        return m.group(1)
+    text = re.sub(r"<\$link\b[^>]*>(.*?)</\$link>", _repl_widget, text, flags=re.DOTALL)
+
+    # 2) Strip [[Title|Label]] / [[Title]]
     def _repl_brackets(m: re.Match) -> str:
         inner = m.group(1)
         if "|" in inner:
-            # keep the *label* (usually the right-hand side)
+            # keep the label (usually right-hand side)
             return inner.split("|")[-1]
         return inner
 
     return re.sub(r"\[\[([^\]]+)\]\]", _repl_brackets, text)
+
 
 
 def normalize_for_compare(s: str) -> str:
@@ -254,7 +266,7 @@ def ensure_tw_project():
         stale .tid files from old runs (which caused duplicate pages,
         Chinese-only tiddlers to linger, etc.).
     """
-    # ===== CHANGE P1: start with a clean workspace =====
+    # start with a clean workspace 
     if WIKI_WORKDIR.exists():
         shutil.rmtree(WIKI_WORKDIR)
 
@@ -918,7 +930,7 @@ def create_tiddlers(en_titles, zh_titles) -> int:
 
             # After all title adjustments, decide which script the *final* title
             # uses. This powers language-aware lists (Recent, More → All).
-            # CHANGE R2: compute title_script here, not earlier.
+            # compute title_script here, not earlier.
             is_title_chinese = looks_like_chinese(title)
             title_script = "zh" if is_title_chinese else "en"
 
@@ -1291,7 +1303,7 @@ def inject_tiddlers():
         </$reveal>
       </div>
 
-      <!-- ==== CHANGE R2: English Recent shows ONLY normal pages
+      <!-- English Recent shows ONLY normal pages
            that actually have English content and non-Chinese titles.
            Also hide tag-definition tiddlers and anything with
            tag[excludeLists]. ======================================= -->
@@ -1305,7 +1317,7 @@ def inject_tiddlers():
         </$list>
       </$reveal>
 
-      <!-- ==== CHANGE R3: Chinese UI Recent shows all normal pages
+      <!--  Chinese UI Recent shows all normal pages
            but STILL hides excludeLists + tag-definition tiddlers. == -->
       <$reveal type="nomatch" state="$:/state/wiki-language" text="en">
         <$list filter="[all[tiddlers]!is[system]!has[draft.of]!tag[excludeLists]!tag[$:/tags/Tag]sort[modified]reverse[]limit[50]]">
@@ -1598,8 +1610,8 @@ def inject_tiddlers():
 # Creates the wiki by invoking TiddlyWiki CLI
 def build_wiki():
     print("[publisher] Building wiki...", flush=True)
-    # ==== CHANGE C1: remove any previous wiki files so we don't keep
-    # stale tiddlers or old tag definitions between runs. ==========
+    # remove any previous wiki files so we don't keep
+    # stale tiddlers or old tag definitions between runs. 
 
     site_output = SITE_DIR / "output"
     if site_output.exists():
