@@ -341,6 +341,14 @@ def create_homepage():
         box-sizing: border-box;
     }
 
+    #site-logo {
+        width: 500px;         /* Adjust as desired */
+        max-width: 80%;
+        height: auto;
+        display: block;
+        margin: 0 auto 20px auto;  /* Centers logo + spacing */
+    }
+
     h1 {
         margin: 0;
         font-size: 48px;
@@ -457,6 +465,7 @@ def create_homepage():
 </head>
 
 <body>
+<img src="NKHW_logo.png" id="site-logo" alt="Nanjing Knowledge Hub Wiki Logo">
 <h1>Nanjing Knowledge Hub Wiki</h1>
 <hr>
 <div class="wrapper">
