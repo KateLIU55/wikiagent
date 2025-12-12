@@ -1,42 +1,79 @@
-WikiAgent
+# WikiAgent
+
 Automated crawling → extraction → summarization → publishing of a multilingual TiddlyWiki site.
 WikiAgent collects Wikipedia pages related to Nanjing, processes them across four services, generates multilingual summaries (English, Simplified Chinese, Traditional Chinese), and publishes a complete static wiki site.
 All components are fully containerized, restart-safe, and designed for unattended scheduled operation.
-1. Features Overview
-Automated Web Crawling
+
+# 1. Features Overview
+   
+## Automated Web Crawling
+
 Collects English and Chinese (zh-Hans, zh-Hant, zh-HK, others) Wikipedia articles
+
 Detects updated pages using caching, etag, and last-modified
+
 Revisits previously crawled pages safely and incrementally
+
 Automatically filters out irrelevant or off-topic pages
-Structured Content Extraction
+
+## Structured Content Extraction
+
 Converts raw HTML into clean, standardized JSON
+
 Extracts title, metadata, categories, language variants
+
 Normalizes Chinese variants into a single canonical zh-article identity
+
 Ensures stable identifiers for deduplication
-LLM Summarization (English / Simplified Chinese / Traditional Chinese)
+
+## LLM Summarization (English / Simplified Chinese / Traditional Chinese)
+
 Uses your Local LLM or any Remote LLM (OpenAI-compatible API).
+
 Strict multilingual logic:
-English Summary
+
+### English Summary
+
 Prefer the English Wikipedia article
+
 If missing → translate from Simplified Chinese
+
 If Simplified missing → translate from Traditional Chinese
-Simplified Chinese Summary
+
+### Simplified Chinese Summary
+
 Prefer the actual Chinese Wikipedia article
+
 If missing → translate from the English summary
-Traditional Chinese Summary
+
+### Traditional Chinese Summary
+
 If a Simplified summary exists → convert Hans → Hant
+
 If no Chinese article exists → translate English directly into Hant
-Deduplication (critical for clients)
+
+## Deduplication (critical for clients)
+
 WikiAgent automatically removes duplicates caused by:
+
 zh-Hans / zh-Hant / zh-HK / zh-SG variants
+
 Chinese redirects
+
 Same topic under multiple URLs
+
 Deduplication occurs in:
+
 Crawler: URL canonicalization + SQLite uniqueness
+
 Extractor: canonical zh_url
+
 Summarizer: skip summarizing duplicates
+
 Publisher: merges by canonical topic ID
+
 This guarantees one summary per topic.
+
 Publisher → Static Website Generator
 Converts summaries to TiddlyWiki tiddlers
 Generates full multilingual HTML wiki
@@ -48,8 +85,9 @@ Supports:
 Manual run (./run_pipeline.sh)
 Scheduled cron automation
 Fully restart-safe
-2. Project Architecture
+3. Project Architecture
 wikiagent/
+```
 │
 ├── run_pipeline.sh          # Full end-to-end automation script
 ├── install_cron.sh          # Installs scheduled automation (cron)
@@ -93,7 +131,8 @@ wikiagent/
     ├── NKHW_logo.png
     ├── index.html
     └── output/              # Published wiki (Tiddlers + HTML)
-3. Getting Started
+```
+4. Getting Started
 System Requirements
 Docker 24+
 Docker Compose v2+
@@ -107,7 +146,7 @@ pydantic
 TiddlyWiki
 LLM client libraries
 cron
-4. Installation
+5. Installation
 Step 1 — Clone the Repository
 git clone --branch main https://github.com/anjso/wikiagent.git wikiagent
 cd wikiagent
@@ -125,7 +164,7 @@ Rebuild all containers
 Run each pipeline stage
 Deduplicate summaries
 Publish the wiki
-5. Scheduled Automation (Cron)
+6. Scheduled Automation (Cron)
 Enable:
 ./install_cron.sh
 Default behavior:
@@ -139,7 +178,7 @@ Verify:
 crontab -l
 Cron logs appear in:
 logs/automation.log
-6. Output Directory Structure
+7. Output Directory Structure
 Stage	Directory	Description
 Crawler	data/raw/	Raw HTML + metadata
 Extractor	data/clean/	Canonical JSON extracted from HTML
@@ -148,7 +187,7 @@ Publisher	site/output/	Full wiki site (HTML + tiddlers)
 Public	site/index.html	Homepage of the generated wiki
 Production site:
 https://anjso.org/wikiagent/
-7. FAQ (Client-Friendly)
+8. FAQ (Client-Friendly)
 1. When should I see the first tiddler?
 You will see results only after the publisher stage completes, not when summarization starts.
 The first full run is the slowest; subsequent runs skip unchanged pages and are much faster.
