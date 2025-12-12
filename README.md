@@ -2,20 +2,19 @@ WikiAgent
 Automated crawling → extraction → summarization → publishing of a multilingual TiddlyWiki site.
 WikiAgent collects Wikipedia pages related to Nanjing, processes them across four services, generates multilingual summaries (English, Simplified Chinese, Traditional Chinese), and publishes a complete static wiki site.
 All components are fully containerized, restart-safe, and designed for unattended scheduled operation.
-
 1. Features Overview
 Automated Web Crawling
 Collects English and Chinese (zh-Hans, zh-Hant, zh-HK, others) Wikipedia articles
 Detects updated pages using caching, etag, and last-modified
 Revisits previously crawled pages safely and incrementally
-Automatically filters out irrelevant, off-topic pages
+Automatically filters out irrelevant or off-topic pages
 Structured Content Extraction
 Converts raw HTML into clean, standardized JSON
 Extracts title, metadata, categories, language variants
 Normalizes Chinese variants into a single canonical zh-article identity
 Ensures stable identifiers for deduplication
 LLM Summarization (English / Simplified Chinese / Traditional Chinese)
-Uses your Local LLM or any Remote LLM (OpenAI-compatible API)
+Uses your Local LLM or any Remote LLM (OpenAI-compatible API).
 Strict multilingual logic:
 English Summary
 Prefer the English Wikipedia article
@@ -27,32 +26,29 @@ If missing → translate from the English summary
 Traditional Chinese Summary
 If a Simplified summary exists → convert Hans → Hant
 If no Chinese article exists → translate English directly into Hant
-Deduplication (important for the client)
-WikiAgent automatically removes duplicate variants caused by:
-zh-Hans / zh-Hant / zh-HK / zh-SG / regional pages
+Deduplication (critical for clients)
+WikiAgent automatically removes duplicates caused by:
+zh-Hans / zh-Hant / zh-HK / zh-SG variants
 Chinese redirects
-Same topic appearing under multiple wiki URLs
-Deduplication happens at:
-Crawler level (URL canonicalization, database uniqueness)
-Extractor level (canonical zh_url)
-Summarizer level (skip summarizing duplicates)
-Publisher level (dedupe by topic ID before creating tiddlers)
-This guarantees one summary per topic, even if Wikipedia provides many regional variants.
+Same topic under multiple URLs
+Deduplication occurs in:
+Crawler: URL canonicalization + SQLite uniqueness
+Extractor: canonical zh_url
+Summarizer: skip summarizing duplicates
+Publisher: merges by canonical topic ID
+This guarantees one summary per topic.
 Publisher → Static Website Generator
 Converts summaries to TiddlyWiki tiddlers
-Generates a full HTML wiki site
-Clients can browse English/Chinese versions easily
-Search, tags, linking, and categories are automatically generated
+Generates full multilingual HTML wiki
+Tags, search, linking, categories auto-generated
 Automated Pipeline (Manual or Cron-Scheduled)
-Complete sequence:
+The complete pipeline:
 crawl → extract → summarize → publish
-Can be run manually (./run_pipeline.sh)
-Can run automatically via cron (1st & 15th of every month or customizable)
-Fully restart-safe (safe after power loss, network interruption)
-
+Supports:
+Manual run (./run_pipeline.sh)
+Scheduled cron automation
+Fully restart-safe
 2. Project Architecture
-
-The WikiAgent system is organized into four core micro-services plus top-level automation scripts. Each service runs inside its own Docker container and communicates through shared /data and /site volumes.
 wikiagent/
 │
 ├── run_pipeline.sh          # Full end-to-end automation script
@@ -94,18 +90,15 @@ wikiagent/
 │   └── wiki.sqlite          # Crawl metadata + link graph
 │
 └── site/                    # Final static wiki output
-    ├── NKHW_logo.png         # Logo
-    ├── index.html           # Homepage wrapper
+    ├── NKHW_logo.png
+    ├── index.html
     └── output/              # Published wiki (Tiddlers + HTML)
-
-
-
 3. Getting Started
 System Requirements
 Docker 24+
 Docker Compose v2+
 macOS / Linux / WSL
-Python 3.10+ only if you run internal tools manually
+Python 3.10+ only if running tools manually
 Project Dependencies (installed inside containers)
 BeautifulSoup
 requests
@@ -114,182 +107,132 @@ pydantic
 TiddlyWiki
 LLM client libraries
 cron
-\
-
 4. Installation
 Step 1 — Clone the Repository
 git clone --branch main https://github.com/anjso/wikiagent.git wikiagent
 cd wikiagent
-
 Step 2 — Configure LLM Settings (brain service)
 Edit in docker-compose.yml:
 LLM_BASE_URL: "http://your-llm-server/v1"
 LLM_API_KEY: "your-api-key"
 LLM_MODEL: "your-model-id"
-
-This is the only configuration required to switch between local and remote LLMs.
+This switches between local or remote LLMs.
 Step 3 — Run the Full Pipeline
 ./run_pipeline.sh
-
 This performs:
 Pull latest code
-Rebuild Docker containers
-Run each stage from scratch
+Rebuild all containers
+Run each pipeline stage
 Deduplicate summaries
-Build the wiki site
-
+Publish the wiki
 5. Scheduled Automation (Cron)
 Enable:
 ./install_cron.sh
-
 Default behavior:
-Runs automatically on the 1st and 15th at 6 AM (local time).
-To modify the schedule:
+Runs automatically on 1st and 15th at 6 AM
+Modify the schedule:
 Edit the CRON= line inside install_cron.sh
-Re-install:
+Then reinstall:
 chmod +x install_cron.sh
 ./install_cron.sh
 Verify:
 crontab -l
 Cron logs appear in:
 logs/automation.log
-
-
 6. Output Directory Structure
-Stage
-Directory
-Description
-Crawler
-data/raw/
-Raw HTML + metadata
-Extracto r 
-data/clean/
-Canonical JSON extracted from HTML
-Summarizer
-data/summarized/
-Final English + Chinese JSON summaries
-Publisher
-site/output/
-Full wiki site (html, tiddlers)
-Public Site
-site/index.html
-Homepage of the generated wiki
-
-Production site is available at:
+Stage	Directory	Description
+Crawler	data/raw/	Raw HTML + metadata
+Extractor	data/clean/	Canonical JSON extracted from HTML
+Summarizer	data/summarized/	Final English + Chinese JSON summaries
+Publisher	site/output/	Full wiki site (HTML + tiddlers)
+Public	site/index.html	Homepage of the generated wiki
+Production site:
 https://anjso.org/wikiagent/
-
-
-
 7. FAQ (Client-Friendly)
 1. When should I see the first tiddler?
-With the current whitelist, you should expect to see the updated wiki after the whole pipeline has completed, not immediately when summarization begins. The first run is the slowest; later runs are faster because the system only processes pages that changed. You can monitor progress by looking at the log file on the deployment machine. 
-It will show which step the pipeline is on (crawler, extractor, summarizer, publisher) and when it finishes. 
-Once the publisher completes, your updated wiki becomes available under site/
-2. How do I access the wiki on the machine?
-The pipeline writes the final static wiki into:
-site/
-
-There are two ways to view it locally on the deployment machine:
-Option 1 — Open the HTML file directly
-double-click or open:
-site/index.html  in any browser.
-Option 2 — Serve it with a lightweight web server
-From a terminal:
+You will see results only after the publisher stage completes, not when summarization starts.
+The first full run is the slowest; subsequent runs skip unchanged pages and are much faster.
+Monitor progress via the log file on the deployment machine.
+2. How do I access the wiki locally?
+Option 1 — Open directly
+Open:
+site/index.html
+Option 2 — Serve locally
 cd site/
 python3 -m http.server 8000
-Then open:
-http://localhost:8000    in your browser.
-This method is recommended because it mimics how GitHub Pages or any static host would serve the site.
-Access wiki remotely — Use Github Pages
-Current code uses gh-pages (contains static website files) for Github Pages, you can access wiki through: http://anjso.org/wikiagent/
-
+Then go to:
+http://localhost:8000
+Remote Access (GitHub Pages)
+If using gh-pages:
+https://anjso.org/wikiagent/
 3. What happens if a container stops? Is it safe to continue?
 Yes — WikiAgent is fully restart-safe.
-Crawler uses atomic writes and SQLite checks
-Extractor can be re-run anytime without losing work
-Summarizer skips already-summarized files using content_hash
-Publisher can rebuild the site repeatedly with no issues
-You do NOT need a cleaning job unless you intentionally want a full reset.
+Crawler uses atomic writes + SQLite
+Extractor re-runs cleanly
+Summarizer skips already summarized pages via content_hash
+Publisher can rebuild infinitely
+No cleanup needed unless you want a fresh run.
 4. What if power is lost during summarization?
-Just restart the pipeline:
+Just run:
 ./run_pipeline.sh
-
-All incomplete summaries will be regenerated automatically.
-
+Incomplete summaries will be regenerated automatically.
 8. Configuration
 LLM Settings (docker-compose.yml)
 LLM_BASE_URL
 LLM_API_KEY
 LLM_MODEL
-
-Whitelist for Crawler
-config/whitelist.yml controls:
-seed URLs
-maximum pages
-depth
-rate limits
-language rules
-include/exclude patterns
-
-9. Development Notes (for maintainers)
+Crawler Whitelist (config/whitelist.yml)
+Controls:
+Seed URLs
+Maximum pages
+Depth
+Rate limits
+Language rules
+Include/exclude patterns
+9. Development Notes (Maintainers)
 Each service has its own Dockerfile
-Logs and backups are stored under /data
-Publisher supports branded logos, CSS overrides, custom homepage
-Duplicate cleanup happens automatically at summarizer startup
-
+Logs and backups stored under /data
+Publisher supports branding, CSS overrides, custom homepage
+Duplicate cleanup occurs automatically at summarizer startup
 10. Contributing
-1. Fork the Repository
-2. Create a Feature Branch
+# Create feature branch
 git checkout -b feature/my-change
 
-3. Commit
+# Commit
 git commit -m "Add: new feature"
 
-4. Push
+# Push
 git push origin feature/my-change
-
-5. Open Pull Request
-
+Then open a Pull Request.
 11. Bug Reporting
-Use GitHub Issues with the following template:
+Include:
 Title
 Short description
-Steps to Reproduce
-1.
-2.
-3.
-Expected Behavior
-Actual Behavior
-Logs / Screenshots
-Include:
-Your docker-compose.yml (omit secrets)
-Which commit/branch you are on
-Relevant pipeline logs
-
+Steps to reproduce
+Expected vs actual behavior
+Logs or screenshots
+docker-compose.yml (remove secrets)
+Commit hash or branch
+Pipeline logs
 12. License
-MIT License — free to use, modify, distribute.
-
+MIT License.
 13. Support
-For customization, troubleshooting, or new features:
-Please open a GitHub Issue.
-
-
+For custom features or troubleshooting, please open a GitHub Issue.
 14. Maintainer Notes
-The following notes are intended for long-term maintainers of the WikiAgent system. These points do not affect normal usage but are helpful when diagnosing issues or updating the pipeline.
-Safe to Restart at Any Time
-All four services (crawler, extractor, summarizer, publisher) are idempotent.
-If a container stops due to power loss or network issues, you can simply rerun ./run_pipeline.sh.
-No special cleanup is required unless you intentionally want to clear old data.
+Fully Restart-Safe
+All services are idempotent; rerunning the pipeline is always safe.
 Duplicate Prevention Logic
-The crawler tracks visited URLs.
-The extractor merges regional Chinese variants.
-The summarizer deduplicates based on content_hash and zh_url.
-The publisher merges by canonical title.
-If duplicates appear, running the pipeline again after clearing problematic JSONs usually resolves it.
+Crawler: URL normalization
+Extractor: merges regional zh variants
+Summarizer: dedupe by content_hash + canonical URL
+Publisher: dedupe by canonical title
+If duplicates appear, removing the problematic summary JSON and rerunning the pipeline usually resolves it.
 Updating LLM or Pipeline Logic
-You may safely modify environment variables such as LLM_BASE_URL, LLM_MODEL, and summarizer rules.
-Any updated logic will apply automatically the next time the pipeline runs.
-Production Deployment & GitHub Pages
-Site output is located in /site/output/.
-If the repo uses GitHub Pages or a deployment workflow, the final site is updated whenever the pipeline commits new output into the designated branch (e.g., gh-pages or main).
-
+Update environment variables such as:
+LLM_BASE_URL
+LLM_MODEL
+Changes apply automatically on next run.
+Production Deployment
+Output lives in:
+/site/output/
+If using GitHub Pages or CI, the site updates whenever new output is committed.
