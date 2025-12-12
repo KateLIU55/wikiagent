@@ -95,7 +95,7 @@ Scheduled cron automation
 
 Fully restart-safe
 
-# 3. Project Architecture
+# 2. Project Architecture
 wikiagent/
 ```
 │
@@ -142,7 +142,7 @@ wikiagent/
     ├── index.html
     └── output/              # Published wiki (Tiddlers + HTML)
 ```
-# 4. Getting Started
+# 3. Getting Started
 ## System Requirements
 
 Docker 24+
@@ -169,7 +169,7 @@ LLM client libraries
 
 cron
 
-# 5. Installation
+# 4. Installation
 ## Step 1 — Clone the Repository
 
 git clone --branch main https://github.com/anjso/wikiagent.git wikiagent
@@ -203,7 +203,7 @@ Deduplicate summaries
 
 Publish the wiki
 
-# 6. Scheduled Automation (Cron)
+# 5. Scheduled Automation (Cron)
 #### Enable:
 
 ./install_cron.sh
@@ -230,7 +230,7 @@ crontab -l
 
 logs/automation.log
 
-# 7. Output Directory Structure
+# 6. Output Directory Structure
 ```
 Stage	        Directory    	  Description
 Crawler	       data/raw/	       Raw HTML + metadata
@@ -241,7 +241,7 @@ Public site	   site/index.html	Homepage of the generated wiki
 ```
 Production site: 
 https://anjso.org/wikiagent/
-# 8. FAQ (Client-Friendly)
+# 7. FAQ (Client-Friendly)
 ## 1. When should I see the first tiddler?
 You will see results only after the publisher stage completes, not when summarization starts.
 The first full run is the slowest; subsequent runs skip unchanged pages and are much faster.
